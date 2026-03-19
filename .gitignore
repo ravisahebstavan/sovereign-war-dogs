@@ -1,0 +1,46 @@
+# ── Secrets — NEVER commit these ─────────────────────────────────────────────
+.env
+signal/.env
+contracts/.env
+sovereign/.env
+sovereign/src/.env
+*.env.local
+
+# ── Python ────────────────────────────────────────────────────────────────────
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# ── Rust ──────────────────────────────────────────────────────────────────────
+sovereign/target/
+
+# ── Node / React ──────────────────────────────────────────────────────────────
+ui/node_modules/
+ui/dist/
+ui/.vite/
+
+# ── HuggingFace model cache ───────────────────────────────────────────────────
+.cache/
+*.bin
+*.safetensors
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Editor ───────────────────────────────────────────────────────────────────
+.idea/
+*.swp
+*.swo
+
+# ── Claude Code session data ──────────────────────────────────────────────────
+.claude/

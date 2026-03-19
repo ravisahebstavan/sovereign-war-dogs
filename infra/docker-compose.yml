@@ -1,0 +1,32 @@
+version: "3.9"
+
+# Optional: if you prefer Docker over manual setup
+# docker-compose up -d redis
+# Then run core, signal, contracts, ui manually (or add services)
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server /etc/redis/redis.conf
+    volumes:
+      - ./redis.conf:/etc/redis/redis.conf:ro
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Uncomment to run sovereign-core in Docker
+  # sovereign-core:
+  #   build: ../core
+  #   environment:
+  #     - FINNHUB_API_KEY=${FINNHUB_API_KEY}
+  #     - REDIS_URL=redis://redis:6379
+  #   depends_on:
+  #     redis:
+  #       condition: service_healthy
+  #   ports:
+  #     - "9001:9001"
