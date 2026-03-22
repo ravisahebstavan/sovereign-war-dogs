@@ -74,6 +74,7 @@ impl RedisBus {
 pub async fn relay_python_events(
     redis_url: String,
     tx: broadcast::Sender<Arc<Event>>,
+    history: crate::ws_server::History,
 ) {
     use redis::streams::StreamReadReply;
 
@@ -130,7 +131,9 @@ pub async fn relay_python_events(
                                             std::mem::discriminant(&event.payload),
                                         );
                                     }
-                                    let _ = tx.send(Arc::new(event));
+                                    let ev = Arc::new(event);
+                                    push_history(&history, ev.clone()).await;
+                                    let _ = tx.send(ev);
                                 }
                                 Err(e) => {
                                     // Log the first 300 chars so we can diagnose schema mismatches
@@ -147,4 +150,11 @@ pub async fn relay_python_events(
             }
         }
     }
+}
+
+/// Push an event into the history ring buffer (max 200 entries).
+async fn push_history(history: &crate::ws_server::History, ev: Arc<Event>) {
+    let mut h = history.write().await;
+    if h.len() >= 200 { h.pop_front(); }
+    h.push_back(ev);
 }
