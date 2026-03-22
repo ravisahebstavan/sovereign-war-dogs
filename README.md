@@ -1,8 +1,9 @@
-# SOVEREIGN — Geopolitical Alpha Pipeline
+# sovereign-war-dogs 🐺
 
-> Real-time defence contract intelligence → AI sentiment scoring → automated paper trades.
+> **Geopolitical alpha engine** — monitors U.S. defense contracts & news to generate real-time trading signals.
 > Built entirely on free, open-source tooling. Zero cost to run.
 
+[![GitHub](https://img.shields.io/badge/GitHub-ravisahebstavan%2Fsovereign--war--dogs-181717?style=flat&logo=github)](https://github.com/ravisahebstavan/sovereign-war-dogs)
 ![Pipeline](https://img.shields.io/badge/pipeline-Rust%20%2B%20Python-orange)
 ![NLP](https://img.shields.io/badge/NLP-FinBERT%20%2B%20spaCy-blue)
 ![Trading](https://img.shields.io/badge/trading-Alpaca%20paper-green)
@@ -60,9 +61,11 @@ alpha = FinBERT_sentiment × contract_boost
   boost = min(3.0,  1.0 + award_USD / 1,000,000,000)
   → $2B contract = 3.0×  |  $500M contract = 1.5×  |  no contract = 1.0×
 
-  alpha > +0.25  →  BUY        (long position, expecting price rise)
-  alpha < -0.25  →  SELL SHORT (short position, expecting price fall)
+  alpha > +0.10  →  BUY        (long position, expecting price rise)
+  alpha < -0.10  →  SELL SHORT (short position, expecting price fall)
   otherwise      →  HOLD       (no trade)
+
+  Threshold is configurable via ALPHA_THRESHOLD env var (default: 0.10)
 ```
 
 ---
@@ -170,8 +173,8 @@ start_sovereign.bat         one-click Windows launcher
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/sovereign-alpha.git
-cd sovereign-alpha
+git clone https://github.com/ravisahebstavan/sovereign-war-dogs.git
+cd sovereign-war-dogs
 cp .env.example .env
 ```
 
@@ -289,3 +292,7 @@ SOVEREIGN executes trades exclusively on an **Alpaca paper trading account** —
 ## License
 
 MIT — use it, fork it, build on it.
+
+---
+
+*"Cry havoc, and let slip the dogs of war."* — Shakespeare, Julius Caesar
