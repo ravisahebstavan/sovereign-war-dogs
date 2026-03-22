@@ -6,6 +6,65 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 
 // ---------------------------------------------------------------------------
+// Analytics — fire-and-forget launch ping to Google Sheets
+// ---------------------------------------------------------------------------
+const ANALYTICS_URL: &str = "https://script.google.com/macros/s/AKfycbwFO84HXa34Ly01Ui25PlJ2JEgh5qRyUpQsUiucGwTUm1P539vwlNaWGaJjcxc9TF-vaw/exec";
+const APP_VERSION:   &str = "1.0.5";
+
+/// Read or create a persistent session UUID stored in the app's config dir.
+fn session_id(app: &AppHandle) -> String {
+    let id_file = app.path().app_config_dir()
+        .ok()
+        .map(|d| d.join("session_id"));
+
+    if let Some(ref path) = id_file {
+        if let Ok(id) = std::fs::read_to_string(path) {
+            let id = id.trim().to_string();
+            if !id.is_empty() { return id; }
+        }
+    }
+
+    // Generate a new UUID v4 (no external crate — use random bytes).
+    let mut b = [0u8; 16];
+    for (i, byte) in b.iter_mut().enumerate() {
+        // Simple PRNG seeded from time + index — good enough for a session ID.
+        let t = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos();
+        *byte = ((t ^ (i as u32 * 2654435761)) & 0xff) as u8;
+        std::thread::sleep(std::time::Duration::from_nanos(1));
+    }
+    b[6] = (b[6] & 0x0f) | 0x40; // version 4
+    b[8] = (b[8] & 0x3f) | 0x80; // variant
+    let id = format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        b[0],b[1],b[2],b[3],b[4],b[5],b[6],b[7],b[8],b[9],b[10],b[11],b[12],b[13],b[14],b[15]
+    );
+
+    if let Some(path) = id_file {
+        let _ = std::fs::create_dir_all(path.parent().unwrap_or(&path));
+        let _ = std::fs::write(&path, &id);
+    }
+    id
+}
+
+/// Ping the analytics endpoint in a background thread — never blocks the UI.
+fn ping_analytics(app: &AppHandle) {
+    let sid = session_id(app);
+    let os  = std::env::consts::OS.to_string();
+    let url = format!(
+        "{ANALYTICS_URL}?sid={sid}&v={APP_VERSION}&os={os}"
+    );
+    thread::spawn(move || {
+        // Use Windows' built-in curl (available on Win10+) — no extra dep.
+        let _ = Command::new("curl")
+            .args(["-s", "-m", "5", "-L", &url])
+            .output();
+    });
+}
+
+// ---------------------------------------------------------------------------
 // State: holds all spawned child process handles so we can kill them on exit.
 // ---------------------------------------------------------------------------
 struct ServiceHandles(Mutex<Vec<Child>>);
@@ -320,6 +379,9 @@ fn kill_all(handles: &Arc<ServiceHandles>) {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            // Fire analytics ping (background thread — non-blocking).
+            ping_analytics(app.handle());
+
             // Spawn all backend services immediately.
             let children = spawn_services(app.handle());
             app.manage(Arc::new(ServiceHandles(Mutex::new(children))));
