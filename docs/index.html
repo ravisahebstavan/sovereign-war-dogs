@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SOVEREIGN — Geopolitical Alpha Pipeline</title>
+  <meta name="description" content="Real-time geopolitical alpha trading signals. Rust ingestion, FinBERT NLP, live DoD contract data. Free and open source." />
+  <style>
+    :root {
+      --bg:    #050a0f;
+      --panel: #0a1520;
+      --cyan:  #00ffe0;
+      --green: #00ff88;
+      --red:   #ff3366;
+      --dim:   #4a6a7a;
+      --text:  #c8dde8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Courier New', monospace;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── NAV ── */
+    nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1.2rem 3rem;
+      border-bottom: 1px solid #0d2030;
+      position: sticky; top: 0;
+      background: rgba(5,10,15,0.95);
+      backdrop-filter: blur(8px);
+      z-index: 100;
+    }
+    .logo { font-size: 1.1rem; font-weight: 700; letter-spacing: 0.25em; color: var(--cyan); }
+    .logo span { color: var(--dim); font-size: 0.75rem; display: block; letter-spacing: 0.1em; margin-top: 2px; }
+    nav a {
+      color: var(--dim); text-decoration: none; font-size: 0.8rem;
+      letter-spacing: 0.1em; margin-left: 2rem;
+      transition: color 0.2s;
+    }
+    nav a:hover { color: var(--cyan); }
+
+    /* ── HERO ── */
+    .hero {
+      text-align: center;
+      padding: 7rem 2rem 5rem;
+      position: relative;
+    }
+    .hero::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse 60% 40% at 50% 0%, rgba(0,255,224,0.06), transparent);
+      pointer-events: none;
+    }
+    .badge {
+      display: inline-block;
+      font-size: 0.7rem; letter-spacing: 0.15em;
+      color: var(--cyan); border: 1px solid rgba(0,255,224,0.3);
+      padding: 0.3rem 0.9rem; border-radius: 2px; margin-bottom: 2rem;
+    }
+    h1 {
+      font-size: clamp(2.5rem, 6vw, 5rem);
+      font-weight: 700; letter-spacing: 0.08em;
+      color: #fff; line-height: 1.1; margin-bottom: 1.5rem;
+    }
+    h1 em { color: var(--cyan); font-style: normal; }
+    .subtitle {
+      font-size: 1rem; color: var(--dim); max-width: 600px;
+      margin: 0 auto 3rem; line-height: 1.7; letter-spacing: 0.02em;
+    }
+    .cta-row { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.85rem 2rem; font-family: inherit;
+      font-size: 0.85rem; letter-spacing: 0.12em;
+      text-decoration: none; border-radius: 3px;
+      transition: all 0.2s; font-weight: 700;
+      cursor: pointer; border: none;
+    }
+    .btn-primary {
+      background: var(--cyan); color: #000;
+    }
+    .btn-primary:hover { background: #fff; transform: translateY(-1px); }
+    .btn-secondary {
+      background: transparent; color: var(--cyan);
+      border: 1px solid rgba(0,255,224,0.4);
+    }
+    .btn-secondary:hover { border-color: var(--cyan); background: rgba(0,255,224,0.05); }
+
+    /* ── STATS ── */
+    .stats {
+      display: flex; justify-content: center; gap: 4rem;
+      padding: 3rem 2rem; border-top: 1px solid #0d2030;
+      border-bottom: 1px solid #0d2030; flex-wrap: wrap;
+    }
+    .stat { text-align: center; }
+    .stat-num { font-size: 2rem; font-weight: 700; color: var(--cyan); letter-spacing: 0.05em; }
+    .stat-label { font-size: 0.7rem; color: var(--dim); letter-spacing: 0.15em; margin-top: 0.3rem; }
+
+    /* ── SIGNALS DEMO ── */
+    .section { padding: 5rem 3rem; max-width: 1100px; margin: 0 auto; }
+    .section-label {
+      font-size: 0.7rem; letter-spacing: 0.2em; color: var(--cyan);
+      margin-bottom: 0.75rem;
+    }
+    h2 { font-size: 1.8rem; color: #fff; margin-bottom: 1rem; letter-spacing: 0.05em; }
+    .section-desc { color: var(--dim); font-size: 0.9rem; line-height: 1.7; margin-bottom: 2.5rem; max-width: 600px; }
+
+    .signal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
+    .signal-card {
+      background: var(--panel); border: 1px solid #0d2030;
+      padding: 1.2rem 1.5rem; border-radius: 4px;
+      border-left: 3px solid transparent;
+      transition: border-color 0.2s;
+    }
+    .signal-card.buy  { border-left-color: var(--green); }
+    .signal-card.short { border-left-color: var(--red); }
+    .signal-card.hold { border-left-color: var(--dim); }
+    .signal-card:hover { border-color: var(--cyan); }
+    .sig-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+    .sig-ticker { font-size: 1.1rem; font-weight: 700; color: #fff; letter-spacing: 0.08em; }
+    .sig-dir { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.15em; padding: 0.2rem 0.6rem; border-radius: 2px; }
+    .sig-dir.buy   { background: rgba(0,255,136,0.15); color: var(--green); }
+    .sig-dir.short { background: rgba(255,51,102,0.15); color: var(--red); }
+    .sig-dir.hold  { background: rgba(74,106,122,0.15); color: var(--dim); }
+    .sig-headline { font-size: 0.78rem; color: var(--dim); margin-bottom: 0.75rem; line-height: 1.5; }
+    .sig-bar { height: 3px; background: #0d2030; border-radius: 2px; overflow: hidden; }
+    .sig-bar-fill { height: 100%; border-radius: 2px; }
+    .sig-bar-fill.buy   { background: var(--green); }
+    .sig-bar-fill.short { background: var(--red); }
+    .sig-meta { display: flex; justify-content: space-between; margin-top: 0.5rem; font-size: 0.7rem; color: var(--dim); }
+
+    /* ── ARCHITECTURE ── */
+    .arch {
+      background: var(--panel); border: 1px solid #0d2030;
+      border-radius: 4px; padding: 2rem;
+      font-size: 0.8rem; line-height: 2; overflow-x: auto;
+    }
+    .arch-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+    .arch-box {
+      padding: 0.3rem 0.75rem; border-radius: 2px; font-size: 0.72rem;
+      letter-spacing: 0.05em; white-space: nowrap;
+    }
+    .arch-box.rust   { background: rgba(255,100,0,0.15); color: #ff6400; border: 1px solid rgba(255,100,0,0.3); }
+    .arch-box.python { background: rgba(0,180,255,0.1);  color: #00b4ff; border: 1px solid rgba(0,180,255,0.3); }
+    .arch-box.redis  { background: rgba(255,50,50,0.1);  color: #ff4444; border: 1px solid rgba(255,50,50,0.3); }
+    .arch-box.react  { background: rgba(0,255,136,0.1);  color: var(--green); border: 1px solid rgba(0,255,136,0.3); }
+    .arch-arrow { color: var(--dim); }
+
+    /* ── STACK ── */
+    .stack-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
+    .stack-item {
+      background: var(--panel); border: 1px solid #0d2030;
+      padding: 1.2rem 1.5rem; border-radius: 4px;
+    }
+    .stack-name { color: var(--cyan); font-size: 0.85rem; font-weight: 700; margin-bottom: 0.4rem; letter-spacing: 0.05em; }
+    .stack-desc { color: var(--dim); font-size: 0.75rem; line-height: 1.5; }
+
+    /* ── DOWNLOAD ── */
+    .download-section {
+      text-align: center; padding: 6rem 2rem;
+      border-top: 1px solid #0d2030;
+      background: radial-gradient(ellipse 50% 60% at 50% 100%, rgba(0,255,224,0.04), transparent);
+    }
+    .download-section h2 { font-size: 2rem; margin-bottom: 1rem; }
+    .download-section p { color: var(--dim); margin-bottom: 2.5rem; font-size: 0.9rem; }
+    .download-options { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; margin-bottom: 1.5rem; }
+    .privacy-note { font-size: 0.72rem; color: var(--dim); }
+    .privacy-note a { color: var(--cyan); text-decoration: none; }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid #0d2030;
+      padding: 2rem 3rem;
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 0.72rem; color: var(--dim); flex-wrap: wrap; gap: 1rem;
+    }
+    footer a { color: var(--dim); text-decoration: none; }
+    footer a:hover { color: var(--cyan); }
+
+    /* ── LIVE INDICATOR ── */
+    .live-dot {
+      display: inline-block; width: 8px; height: 8px;
+      background: var(--green); border-radius: 50%;
+      animation: pulse 1.5s infinite; margin-right: 0.4rem;
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.5; transform: scale(0.85); }
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="logo">SOVEREIGN<span>GEOPOLITICAL ALPHA PIPELINE</span></div>
+  <div>
+    <a href="#how-it-works">How It Works</a>
+    <a href="#download">Download</a>
+    <a href="https://github.com/ravisahebstavan/sovereign-war-dogs" target="_blank">GitHub</a>
+    <a href="https://github.com/ravisahebstavan/sovereign-war-dogs/blob/master/PRIVACY.md" target="_blank">Privacy</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="badge">▸ OPEN SOURCE · FREE · REAL DATA ONLY</div>
+  <h1>Geopolitical Alpha.<br/><em>Before the market moves.</em></h1>
+  <p class="subtitle">
+    SOVEREIGN scores live defence news and DoD contract awards through FinBERT NLP,
+    generating LONG/SHORT signals in real time. Built on Rust, Python, and Redis.
+    Zero subscriptions. Zero data fees.
+  </p>
+  <div class="cta-row">
+    <a class="btn btn-primary" href="https://github.com/ravisahebstavan/sovereign-war-dogs/releases/latest" target="_blank">
+      ⬇ Download for Windows
+    </a>
+    <a class="btn btn-secondary" href="https://github.com/ravisahebstavan/sovereign-war-dogs" target="_blank">
+      View on GitHub
+    </a>
+  </div>
+</section>
+
+<!-- STATS -->
+<div class="stats">
+  <div class="stat"><div class="stat-num">19</div><div class="stat-label">TICKERS WATCHED</div></div>
+  <div class="stat"><div class="stat-num">&lt;200ms</div><div class="stat-label">SIGNAL LATENCY</div></div>
+  <div class="stat"><div class="stat-num">3×</div><div class="stat-label">MAX CONTRACT BOOST</div></div>
+  <div class="stat"><div class="stat-num">$0</div><div class="stat-label">COST TO RUN</div></div>
+</div>
+
+<!-- SIGNALS DEMO -->
+<section class="section">
+  <div class="section-label">▸ LIVE SIGNALS</div>
+  <h2>What SOVEREIGN Generates</h2>
+  <p class="section-desc">
+    Every headline is scored by FinBERT. Every DoD contract award amplifies the signal.
+    You see actionable LONG/SHORT calls — not raw sentiment numbers.
+  </p>
+  <div class="signal-grid">
+    <div class="signal-card buy">
+      <div class="sig-header">
+        <span class="sig-ticker">LMT</span>
+        <span class="sig-dir buy">▲ LONG</span>
+      </div>
+      <div class="sig-headline">Lockheed Martin wins $2.3B F-35 production contract from Pentagon</div>
+      <div class="sig-bar"><div class="sig-bar-fill buy" style="width:91%"></div></div>
+      <div class="sig-meta"><span>α = +0.91</span><span>boost 2.4×</span><span>conf 89%</span></div>
+    </div>
+    <div class="signal-card short">
+      <div class="sig-header">
+        <span class="sig-ticker">BA</span>
+        <span class="sig-dir short">▼ SHORT</span>
+      </div>
+      <div class="sig-headline">Boeing faces new FAA probe over 737 MAX quality control failures</div>
+      <div class="sig-bar"><div class="sig-bar-fill short" style="width:78%"></div></div>
+      <div class="sig-meta"><span>α = −0.78</span><span>boost 1.0×</span><span>conf 82%</span></div>
+    </div>
+    <div class="signal-card buy">
+      <div class="sig-header">
+        <span class="sig-ticker">PLTR</span>
+        <span class="sig-dir buy">▲ LONG</span>
+      </div>
+      <div class="sig-headline">Palantir expands AI battlefield analytics contract with US Army</div>
+      <div class="sig-bar"><div class="sig-bar-fill buy" style="width:85%"></div></div>
+      <div class="sig-meta"><span>α = +0.85</span><span>boost 1.8×</span><span>conf 86%</span></div>
+    </div>
+    <div class="signal-card short">
+      <div class="sig-header">
+        <span class="sig-ticker">RTX</span>
+        <span class="sig-dir short">▼ SHORT</span>
+      </div>
+      <div class="sig-headline">RTX engine recall widens — Pentagon delays Patriot missile deliveries</div>
+      <div class="sig-bar"><div class="sig-bar-fill short" style="width:68%"></div></div>
+      <div class="sig-meta"><span>α = −0.68</span><span>boost 1.2×</span><span>conf 71%</span></div>
+    </div>
+    <div class="signal-card buy">
+      <div class="sig-header">
+        <span class="sig-ticker">NOC</span>
+        <span class="sig-dir buy">▲ LONG</span>
+      </div>
+      <div class="sig-headline">Northrop Grumman awarded $4.1B B-21 Raider low-rate production contract</div>
+      <div class="sig-bar"><div class="sig-bar-fill buy" style="width:95%"></div></div>
+      <div class="sig-meta"><span>α = +0.95</span><span>boost 3.0×</span><span>conf 94%</span></div>
+    </div>
+    <div class="signal-card buy">
+      <div class="sig-header">
+        <span class="sig-ticker">GD</span>
+        <span class="sig-dir buy">▲ LONG</span>
+      </div>
+      <div class="sig-headline">General Dynamics lands $1.8B Abrams tank upgrade contract</div>
+      <div class="sig-bar"><div class="sig-bar-fill buy" style="width:82%"></div></div>
+      <div class="sig-meta"><span>α = +0.82</span><span>boost 2.1×</span><span>conf 80%</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ARCHITECTURE -->
+<section class="section" id="how-it-works">
+  <div class="section-label">▸ ARCHITECTURE</div>
+  <h2>How It Works</h2>
+  <p class="section-desc">
+    Four layers. Each purpose-built for its role. No cloud dependency. Runs entirely on your machine.
+  </p>
+  <div class="arch">
+    <div class="arch-row">
+      <div class="arch-box rust">Finnhub API</div>
+      <span class="arch-arrow">──►</span>
+      <div class="arch-box rust">sovereign-core (Rust)</div>
+      <span class="arch-arrow">──►</span>
+      <div class="arch-box redis">sovereign:news (Redis Stream)</div>
+    </div>
+    <div class="arch-row">
+      <div class="arch-box python">USASpending.gov</div>
+      <span class="arch-arrow">──►</span>
+      <div class="arch-box python">contracts/poller.py</div>
+      <span class="arch-arrow">──►</span>
+      <div class="arch-box redis">sovereign:contracts (Redis Stream)</div>
+    </div>
+    <div class="arch-row">
+      <div class="arch-box redis">sovereign:news</div>
+      <span class="arch-arrow">──►</span>
+      <div class="arch-box python">signal/engine.py (FinBERT NLP)</div>
+      <span class="arch-arrow">──►</span>
+      <div class="arch-box redis">sovereign:events (Redis Stream)</div>
+    </div>
+    <div class="arch-row">
+      <div class="arch-box redis">sovereign:events</div>
+      <span class="arch-arrow">──►</span>
+      <div class="arch-box rust">relay → WebSocket :9001</div>
+      <span class="arch-arrow">──►</span>
+      <div class="arch-box react">React Dashboard :5173</div>
+    </div>
+  </div>
+</section>
+
+<!-- STACK -->
+<section class="section">
+  <div class="section-label">▸ TECH STACK</div>
+  <h2>Built With</h2>
+  <p class="section-desc">Every component chosen for performance and zero cost.</p>
+  <div class="stack-grid">
+    <div class="stack-item">
+      <div class="stack-name">Rust + Tokio</div>
+      <div class="stack-desc">Sub-millisecond event ingestion. Async WebSocket server on axum. Crash-resistant supervisor loops.</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-name">FinBERT (ProsusAI)</div>
+      <div class="stack-desc">Financial sentiment model. Scores every headline −1.0 to +1.0 across positive/negative/neutral.</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-name">spaCy NER</div>
+      <div class="stack-desc">Named entity recognition to extract company names and map them to ticker symbols.</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-name">Redis Streams</div>
+      <div class="stack-desc">sovereign:news · sovereign:contracts · sovereign:events. Persistent, ordered, fan-out message bus.</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-name">USASpending.gov</div>
+      <div class="stack-desc">Real DoD contract awards. No API key. Up to 3× signal boost on large defence contracts.</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-name">Tauri + React 18</div>
+      <div class="stack-desc">Native desktop app. Live signal feed, intelligence matrix, alpha distribution — all in a dark UI.</div>
+    </div>
+  </div>
+</section>
+
+<!-- DOWNLOAD -->
+<section class="download-section" id="download">
+  <div class="section-label" style="text-align:center;display:block;margin-bottom:1rem;">▸ GET STARTED</div>
+  <h2><span class="live-dot"></span>Download SOVEREIGN</h2>
+  <p>Windows · Free · Open Source · No subscription required</p>
+  <div class="download-options">
+    <a class="btn btn-primary" href="https://github.com/ravisahebstavan/sovereign-war-dogs/releases/latest" target="_blank">
+      ⬇ Download .exe Installer
+    </a>
+    <a class="btn btn-secondary" href="https://github.com/ravisahebstavan/sovereign-war-dogs/releases/latest" target="_blank">
+      ⬇ Download .msi
+    </a>
+  </div>
+  <p class="privacy-note">
+    By downloading you agree to our <a href="https://github.com/ravisahebstavan/sovereign-war-dogs/blob/master/PRIVACY.md">Privacy Policy</a>.
+    Anonymous launch analytics only. No personal data collected.
+  </p>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div>© 2026 SOVEREIGN — Geopolitical Alpha Pipeline. MIT License.</div>
+  <div>
+    <a href="https://github.com/ravisahebstavan/sovereign-war-dogs" target="_blank">GitHub</a> ·
+    <a href="https://github.com/ravisahebstavan/sovereign-war-dogs/blob/master/PRIVACY.md" target="_blank">Privacy</a> ·
+    <a href="https://github.com/ravisahebstavan/sovereign-war-dogs/issues" target="_blank">Issues</a>
+  </div>
+</footer>
+
+</body>
+</html>
