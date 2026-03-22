@@ -1,9 +1,8 @@
 """
 sovereign-signal/news_poller.py
 
-Polls Finnhub company-specific news for every watchlist ticker and
-publishes to the sovereign:news Redis stream in the same Event envelope
-format as the Rust core.
+Polls Finnhub's /company-news endpoint for every watchlist ticker and
+publishes NewsItem events to the sovereign:news Redis stream.
 
 WHY THIS EXISTS:
   The Rust core polls Finnhub *general* news which rarely has defence
@@ -12,9 +11,9 @@ WHY THIS EXISTS:
   scored articles flow continuously into the pipeline.
 
 Rate limit: Finnhub free = 60 req/min.
-  Rust core uses ~35/min (19 quotes + 1 general news).
-  This poller uses ~10/min (10 tickers × 1 per 60s cycle).
-  Total: ~45/min — safely under the limit.
+  Rust quotes use ~20/min (19 tickers × 1s spacing).
+  This poller uses ~10/min (19 tickers × 2s spacing).
+  General news: 2/min. Total: ~32/min — safely under the limit.
 """
 
 import asyncio
@@ -37,48 +36,53 @@ logging.basicConfig(
     format='{"ts":"%(asctime)s","level":"%(levelname)s","msg":"%(message)s"}'
 )
 
-REDIS_URL    = os.getenv("REDIS_URL", "redis://localhost:6379")
-FINNHUB_KEY  = os.getenv("FINNHUB_API_KEY", "")
-STREAM_NEWS  = "sovereign:news"
-POLL_CYCLE   = 90   # seconds between full cycles (all tickers)
+REDIS_URL   = os.getenv("REDIS_URL", "redis://localhost:6379")
+FINNHUB_KEY = os.getenv("FINNHUB_API_KEY", "")
+STREAM_NEWS = "sovereign:news"
+POLL_CYCLE  = 90    # seconds between full cycles
+DAYS_BACK   = 3    # how many days of news to look back on each cycle
+ARTICLES_PER_TICKER = 3
 
-# Top defence & aerospace watchlist — company-specific news guarantees relevance
+# Full 19-ticker watchlist — same as Rust core
 WATCHLIST = [
-    "LMT",   # Lockheed Martin
-    "RTX",   # Raytheon Technologies
-    "NOC",   # Northrop Grumman
-    "GD",    # General Dynamics
-    "BA",    # Boeing
-    "HII",   # Huntington Ingalls
-    "LHX",   # L3Harris
-    "PLTR",  # Palantir
-    "KTOS",  # Kratos Defense
-    "BAH",   # Booz Allen Hamilton
-    "LDOS",  # Leidos
-    "SAIC",  # SAIC
-    "AVAV",  # AeroVironment
-    "CACI",  # CACI International
-    "MANT",  # ManTech
+    "LMT",  "RTX",  "NOC",  "GD",   "BA",
+    "HII",  "LHX",  "LDOS", "SAIC", "BAH",
+    "PLTR", "KTOS", "AVAV", "CACI", "MANT",
+    "MSFT", "AMZN", "GOOGL", "ORCL",
 ]
 
 FINNHUB_COMPANY_NEWS = "https://finnhub.io/api/v1/company-news"
 
 
-def now_ns() -> int:
-    return time.time_ns()
+# ─── Redis connection with retry ─────────────────────────────────────────────
 
+async def connect_redis(url: str) -> aioredis.Redis:
+    backoff = 1
+    while True:
+        try:
+            r = await aioredis.from_url(url, decode_responses=True)
+            await r.ping()
+            log.info("Redis connected")
+            return r
+        except Exception as e:
+            log.warning(f"Redis connect failed: {e} — retrying in {backoff}s")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 60)
+
+
+# ─── Event builder — matches the format engine.py expects ───────────────────
 
 def build_news_event(article: dict, ticker: str) -> dict:
-    ingested = now_ns()
+    now_ns = time.time_ns()
     return {
         "id":          str(uuid.uuid4()),
-        "ingested_ns": ingested,
-        "routed_ns":   now_ns(),
+        "ingested_ns": now_ns,
+        "routed_ns":   now_ns,
         "payload": {
             "kind":           "news",
             "article_id":     str(article.get("id", uuid.uuid4())),
             "headline":       article.get("headline", ""),
-            "summary":        article.get("summary", ""),
+            "summary":        article.get("summary",  ""),
             "tickers":        [ticker],   # guaranteed — company-specific endpoint
             "source":         article.get("source", "finnhub"),
             "url":            article.get("url", ""),
@@ -87,11 +91,14 @@ def build_news_event(article: dict, ticker: str) -> dict:
     }
 
 
-async def fetch_company_news(
+# ─── Fetch one ticker's news ─────────────────────────────────────────────────
+
+async def fetch_ticker_news(
     client: httpx.AsyncClient,
     ticker: str,
-    days_back: int = 3,
-) -> list[dict]:
+    days_back: int = DAYS_BACK,
+) -> tuple[list[dict], bool]:
+    """Returns (articles, rate_limited)."""
     today     = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     from_date = (datetime.now(timezone.utc) - timedelta(days=days_back)).strftime("%Y-%m-%d")
 
@@ -101,69 +108,98 @@ async def fetch_company_news(
             params={"symbol": ticker, "from": from_date, "to": today, "token": FINNHUB_KEY},
             timeout=10,
         )
+        if r.status_code == 429:
+            return [], True
+        if r.status_code == 401:
+            log.error("Invalid FINNHUB_API_KEY — check your .env")
+            return [], False
         r.raise_for_status()
-        return r.json() if isinstance(r.json(), list) else []
+        data = r.json()
+        return (data if isinstance(data, list) else []), False
     except Exception as e:
         log.warning(f"news fetch error [{ticker}]: {e}")
-        return []
+        return [], False
 
+
+# ─── Main loop ───────────────────────────────────────────────────────────────
 
 async def run():
     if not FINNHUB_KEY:
         log.error("FINNHUB_API_KEY not set — check your .env file")
         return
 
-    redis    = await aioredis.from_url(REDIS_URL, decode_responses=True)
-    seen_ids: set[str] = set()
+    redis = await connect_redis(REDIS_URL)
 
-    log.info(f"Company news poller starting — {len(WATCHLIST)} tickers, {POLL_CYCLE}s cycle")
+    # Namespace seen_ids by ticker so the same article can generate separate
+    # signals per ticker (e.g. a joint contract mentions LMT and RTX)
+    seen_ids: set[str] = set()
+    cycle_num = 0
+
+    log.info(
+        f"news poller ready — {len(WATCHLIST)} tickers · "
+        f"{ARTICLES_PER_TICKER} articles each · {POLL_CYCLE}s cycle"
+    )
 
     async with httpx.AsyncClient(
-        headers={"User-Agent": "sovereign-alpha-pipeline/0.1 research"},
+        headers={"User-Agent": "sovereign-war-dogs/1.0 research"},
     ) as client:
+
         while True:
+            cycle_num  += 1
             cycle_start = time.time()
             published   = 0
 
+            log.info(f"cycle {cycle_num} — fetching news for all {len(WATCHLIST)} tickers")
+
             for ticker in WATCHLIST:
-                articles = await fetch_company_news(client, ticker)
+                articles, rate_limited = await fetch_ticker_news(client, ticker)
 
-                for article in articles:
-                    article_id = str(article.get("id", ""))
-                    if not article_id or article_id in seen_ids:
-                        continue
-                    if not article.get("headline", "").strip():
+                if rate_limited:
+                    log.warning("Finnhub rate limited — backing off 60s and resuming cycle")
+                    await asyncio.sleep(60)
+                    continue
+
+                for article in articles[:ARTICLES_PER_TICKER]:
+                    # Prefix with ticker so same article generates per-ticker signals
+                    uid      = f"{ticker}-{article.get('id', 0)}"
+                    headline = (article.get("headline") or "").strip()
+
+                    if not headline or uid in seen_ids:
                         continue
 
-                    seen_ids.add(article_id)
+                    seen_ids.add(uid)
                     event = build_news_event(article, ticker)
 
-                    await redis.xadd(
-                        STREAM_NEWS,
-                        {"data": json.dumps(event)},
-                        maxlen=5000,
-                        approximate=True,
-                    )
-                    published += 1
-                    log.info(f"NEWS [{ticker}] {article.get('headline','')[:80]}")
+                    try:
+                        await redis.xadd(
+                            STREAM_NEWS,
+                            {"data": json.dumps(event)},
+                            maxlen=10_000,
+                            approximate=True,
+                        )
+                        published += 1
+                        log.info(f"NEWS  {ticker:6s} — {headline[:90]}")
+                    except Exception as e:
+                        log.error(f"Redis xadd failed: {e} — reconnecting")
+                        redis = await connect_redis(REDIS_URL)
 
-                # Space requests ~1.5s apart to stay well under 60 req/min
-                await asyncio.sleep(1.5)
+                # 2s between tickers — keeps us ~10 req/min during the active window
+                await asyncio.sleep(2)
 
-            if published:
-                log.info(f"published {published} new articles this cycle")
-            else:
-                log.info("cycle complete — no new articles")
+            log.info(
+                f"cycle {cycle_num} done — {published} new articles published "
+                f"({time.time() - cycle_start:.0f}s elapsed)"
+            )
 
-            # Keep seen_ids bounded
-            if len(seen_ids) > 20_000:
-                seen_ids = set(list(seen_ids)[-10_000:])
+            # Bound seen_ids to last 10k entries to prevent unbounded growth
+            if len(seen_ids) > 10_000:
+                seen_ids = set(list(seen_ids)[-5_000:])
 
-            # Wait out the rest of the cycle
-            elapsed = time.time() - cycle_start
-            sleep_for = max(0, POLL_CYCLE - elapsed)
-            log.info(f"next cycle in {sleep_for:.0f}s")
-            await asyncio.sleep(sleep_for)
+            # Sleep for the remainder of the cycle window
+            elapsed    = time.time() - cycle_start
+            sleep_time = max(0, POLL_CYCLE - elapsed)
+            log.info(f"next cycle in {sleep_time:.0f}s")
+            await asyncio.sleep(sleep_time)
 
 
 if __name__ == "__main__":
