@@ -1,0 +1,44 @@
+{
+  "productName": "SOVEREIGN",
+  "version": "1.0.0",
+  "identifier": "com.wardog.sovereign",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "SOVEREIGN — Geopolitical Alpha Pipeline",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1200,
+        "minHeight": 700,
+        "resizable": true,
+        "fullscreen": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "resources": [
+      "../../../signal/engine.py",
+      "../../../signal/news_poller.py",
+      "../../../signal/nlp.py",
+      "../../../signal/ticker_map.py",
+      "../../../signal/alpaca_exec.py",
+      "../../../signal/requirements.txt",
+      "../../../contracts/poller.py",
+      "../../../contracts/resolver.py",
+      "../../../contracts/requirements.txt",
+      "binaries/sovereign-core.exe"
+    ]
+  }
+}
