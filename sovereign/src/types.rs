@@ -66,6 +66,16 @@ pub struct SignalItem {
     pub rationale: String,
     pub trigger_headline: String,
     pub order_id: Option<String>,
+    // FinBERT 3-class breakdown — written by Python engine.py, used by dashboard deep-analysis panel
+    #[serde(default)] pub finbert_positive: f32,
+    #[serde(default)] pub finbert_negative: f32,
+    #[serde(default)] pub finbert_neutral:  f32,
+    #[serde(default)] pub nlp_confidence:   f32,
+    // Narrative intelligence fields
+    #[serde(default)] pub themes:           Vec<String>,
+    #[serde(default)] pub entities:         Vec<serde_json::Value>,
+    #[serde(default)] pub article_source:   String,
+    #[serde(default)] pub article_url:      String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
