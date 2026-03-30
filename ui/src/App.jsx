@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import Setup from "./Setup.jsx";
+import Setup, { isBrowserSetupComplete } from "./Setup.jsx";
 
 // ─── WebSocket hook ───────────────────────────────────────────────────────────
 
@@ -964,7 +964,7 @@ export default function App() {
         .then(ok => setSetupDone(ok))
         .catch(() => setSetupDone(true));
     } else {
-      setSetupDone(true); // plain browser / dev mode — skip gate
+      setSetupDone(isBrowserSetupComplete()); // browser — check localStorage
     }
   }, []);
 
