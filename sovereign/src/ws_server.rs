@@ -8,6 +8,7 @@ use axum::{
 use std::{collections::VecDeque, sync::Arc};
 use tokio::sync::{broadcast, RwLock};
 use tower_http::cors::{Any, CorsLayer};
+use std::time::Duration;
 use tracing::info;
 
 type Tx      = broadcast::Sender<Arc<Event>>;
@@ -26,9 +27,23 @@ pub async fn run(addr: String, tx: Tx, history: History) {
         .layer(cors)
         .with_state((tx, history));
 
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .expect("could not bind WS server");
+    // Retry binding — port 9001 may still be held by a previous instance for a few seconds.
+    let listener = {
+        let mut attempts = 0u8;
+        loop {
+            match tokio::net::TcpListener::bind(&addr).await {
+                Ok(l) => break l,
+                Err(e) => {
+                    attempts += 1;
+                    if attempts >= 10 {
+                        panic!("could not bind WS server on {addr} after 10 attempts: {e}");
+                    }
+                    tracing::warn!("port {addr} busy, retrying in 1s ({attempts}/10)…");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        }
+    };
 
     info!("WebSocket server listening on ws://{addr}/ws");
     axum::serve(listener, app).await.unwrap();

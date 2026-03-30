@@ -202,12 +202,19 @@ async def run():
                 text = f"{headline}. {summary}"
 
                 # ── NLP — run in thread pool so event loop is never blocked ──
+                # 30s timeout guards against a hung inference process.
                 t0 = time.perf_counter()
                 try:
-                    sent_result, org_names = await asyncio.gather(
-                        asyncio.to_thread(nlp.sentiment_full, text),
-                        asyncio.to_thread(nlp.extract_orgs, text),
+                    sent_result, org_names = await asyncio.wait_for(
+                        asyncio.gather(
+                            asyncio.to_thread(nlp.sentiment_full, text),
+                            asyncio.to_thread(nlp.extract_orgs, text),
+                        ),
+                        timeout=30.0,
                     )
+                except asyncio.TimeoutError:
+                    log.warning("NLP inference timed out after 30s — skipping article")
+                    continue
                 except Exception as e:
                     log.warning(f"NLP error: {e}")
                     continue

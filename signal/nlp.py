@@ -21,20 +21,35 @@ log = logging.getLogger("sovereign.nlp")
 class NLPPipeline:
     def __init__(self):
         log.info("loading spaCy en_core_web_sm…")
-        self._nlp = spacy.load("en_core_web_sm")
+        try:
+            self._nlp = spacy.load("en_core_web_sm")
+        except OSError:
+            log.info("en_core_web_sm not found — downloading now…")
+            import subprocess, sys
+            subprocess.run(
+                [sys.executable, "-m", "spacy", "download", "en_core_web_sm"],
+                check=True,
+            )
+            self._nlp = spacy.load("en_core_web_sm")
 
         log.info("loading ProsusAI/finbert (downloading on first run ~400MB)…")
         # Use CPU — deterministic, no CUDA required
         device = 0 if torch.cuda.is_available() else -1
-        self._sentiment = pipeline(
-            "text-classification",
-            model="ProsusAI/finbert",
-            tokenizer="ProsusAI/finbert",
-            device=device,
-            top_k=None,          # return all 3 class scores
-            truncation=True,
-            max_length=512,
-        )
+        try:
+            self._sentiment = pipeline(
+                "text-classification",
+                model="ProsusAI/finbert",
+                tokenizer="ProsusAI/finbert",
+                device=device,
+                top_k=None,          # return all 3 class scores
+                truncation=True,
+                max_length=512,
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load FinBERT: {e}\n"
+                "Run: pip install transformers torch  (or check your internet connection)"
+            ) from e
         log.info(f"FinBERT loaded on {'GPU' if device == 0 else 'CPU'}")
 
     def extract_orgs(self, text: str) -> list[str]:

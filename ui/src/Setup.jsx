@@ -179,7 +179,7 @@ function StepPrereqs({ onNext }) {
   async function handleInstallDeps() {
     setInstalling(true);
     setInstallLog("");
-    setInstallErr("");
+    setInstallErr("");   // clear previous error on every attempt
     try {
       const log = await tauriInvoke("install_python_deps");
       setInstallLog(log || "All packages installed successfully.");
@@ -226,8 +226,8 @@ function StepPrereqs({ onNext }) {
           <div style={{ marginTop: 10, fontSize: 10, color: "#ff3355", lineHeight: 1.6 }}>{installErr}</div>
         )}
         {installLog && !installErr && (
-          <div style={{ marginTop: 10, maxHeight: 80, overflowY: "auto", fontSize: 9, color: "#333", lineHeight: 1.6 }}>
-            {installLog.slice(-400)}
+          <div style={{ marginTop: 10, maxHeight: 80, overflowY: "auto", fontSize: 9, color: "#333", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+            {installLog.slice(0, 400)}
           </div>
         )}
       </div>

@@ -5,6 +5,12 @@ use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 
+// Windows: spawn child processes without any visible console window.
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 // ---------------------------------------------------------------------------
 // Analytics — fire-and-forget launch ping to Google Sheets
 // ---------------------------------------------------------------------------
@@ -177,6 +183,18 @@ fn find_sovereign_exe(app: &AppHandle, project_root: Option<&Path>) -> Option<Pa
     None
 }
 
+/// Build a Command with CREATE_NO_WINDOW on Windows so no console ever pops up.
+#[cfg(target_os = "windows")]
+fn silent_cmd(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut cmd = Command::new(program);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+#[cfg(not(target_os = "windows"))]
+fn silent_cmd(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    Command::new(program)
+}
+
 /// Locate the Python interpreter for a given venv directory.
 /// Returns `<venv>/Scripts/python.exe` on Windows, `<venv>/bin/python` elsewhere.
 fn venv_python(venv: &Path) -> PathBuf {
@@ -318,7 +336,7 @@ fn spawn_services(app: &AppHandle) -> Vec<Child> {
     if redis_already_up {
         eprintln!("[SOVEREIGN] Redis already running — skipping launch");
     } else if let Some(redis_exe) = find_redis_exe(app) {
-        match Command::new(&redis_exe).args(["--port", "6380"]).spawn() {
+        match silent_cmd(&redis_exe).args(["--port", "6380"]).spawn() {
             Ok(child) => {
                 eprintln!("[SOVEREIGN] Redis started from {} (pid {})", redis_exe.display(), child.id());
                 children.push(child);
@@ -333,7 +351,7 @@ fn spawn_services(app: &AppHandle) -> Vec<Child> {
 
     // ---- 2. sovereign-core ----
     if let Some(sovereign_exe) = find_sovereign_exe(app, project_root.as_deref()) {
-        match Command::new(&sovereign_exe).spawn() {
+        match silent_cmd(&sovereign_exe).spawn() {
             Ok(child) => {
                 eprintln!("[SOVEREIGN] sovereign-core started (pid {})", child.id());
                 children.push(child);
@@ -363,7 +381,7 @@ fn spawn_services(app: &AppHandle) -> Vec<Child> {
             Some(script) => {
                 // Set the script's directory as cwd so relative imports work.
                 let cwd = script.parent().unwrap_or(&script).to_path_buf();
-                match Command::new(&python).arg(&script).current_dir(&cwd).spawn() {
+                match silent_cmd(&python).arg(&script).current_dir(&cwd).spawn() {
                     Ok(child) => {
                         eprintln!("[SOVEREIGN] {label} started (pid {})", child.id());
                         children.push(child);
@@ -444,7 +462,7 @@ fn install_python_deps(app: AppHandle) -> Result<String, String> {
     std::fs::create_dir_all(&config_dir).map_err(|e| e.to_string())?;
     let venv = config_dir.join("venv");
 
-    let venv_out = std::process::Command::new("python")
+    let venv_out = silent_cmd("python")
         .args(["-m", "venv", venv.to_str().unwrap_or("")])
         .output()
         .map_err(|e| format!("Failed to create Python venv: {e}"))?;
@@ -454,7 +472,7 @@ fn install_python_deps(app: AppHandle) -> Result<String, String> {
 
     // 3. pip install using the venv's own pip
     let pip = venv.join("Scripts").join("pip.exe");
-    let out = std::process::Command::new(&pip)
+    let out = silent_cmd(&pip)
         .args(["install", "-r", req.to_str().unwrap_or(""), "--no-warn-script-location"])
         .output()
         .map_err(|e| format!("pip failed: {e}"))?;

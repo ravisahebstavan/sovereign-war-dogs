@@ -17,6 +17,7 @@ function useSovereignWS(url) {
       const ws = new WebSocket(url);
       wsRef.current = ws;
       ws.onopen  = () => { setConnected(true); clearTimeout(reconnectRef.current); };
+      ws.onerror = () => { /* let onclose handle reconnect */ };
       ws.onclose = () => { setConnected(false); reconnectRef.current = setTimeout(connect, 2000); };
       ws.onmessage = (e) => {
         try {
@@ -31,9 +32,14 @@ function useSovereignWS(url) {
             setTrades(prev => ({ ...prev, [p.ticker]: { price: p.price, volume: p.volume, ts: Date.now() } }));
           else if (p.kind === "latency_snapshot")
             setLatency(p);
-        } catch {}
+        } catch (err) {
+          console.warn("[SOVEREIGN] WS message parse error:", err);
+        }
       };
-    } catch {}
+    } catch (err) {
+      console.warn("[SOVEREIGN] WebSocket connect error:", err);
+      reconnectRef.current = setTimeout(connect, 2000);
+    }
   }, [url]);
 
   useEffect(() => {

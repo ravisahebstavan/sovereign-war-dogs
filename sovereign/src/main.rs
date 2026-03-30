@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
     let finnhub_key = std::env::var("FINNHUB_API_KEY")
         .expect("FINNHUB_API_KEY not set — get a free key at finnhub.io");
     let redis_url = std::env::var("REDIS_URL")
-        .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        .unwrap_or_else(|_| "redis://127.0.0.1:6380".to_string());
 
     info!("SOVEREIGN CORE starting — connecting to Redis at {redis_url}");
 
