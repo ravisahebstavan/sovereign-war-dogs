@@ -376,6 +376,66 @@ fn kill_all(handles: &Arc<ServiceHandles>) {
 // Setup commands — invoked from the React onboarding page
 // ---------------------------------------------------------------------------
 
+/// Check whether Python 3.11+ is available on PATH.
+#[tauri::command]
+fn check_python() -> serde_json::Value {
+    for bin in &["python", "python3", "python3.11"] {
+        if let Ok(out) = std::process::Command::new(bin).arg("--version").output() {
+            let v = String::from_utf8_lossy(&out.stdout).to_string()
+                + &String::from_utf8_lossy(&out.stderr).to_string();
+            let v = v.trim().to_string();
+            if v.starts_with("Python 3.") {
+                return serde_json::json!({ "ok": true, "version": v });
+            }
+        }
+    }
+    serde_json::json!({ "ok": false, "version": "" })
+}
+
+/// Check whether Redis is reachable (port 6380 then 6379).
+#[tauri::command]
+fn check_redis() -> serde_json::Value {
+    use std::net::TcpStream;
+    if TcpStream::connect("127.0.0.1:6380").is_ok() {
+        return serde_json::json!({ "ok": true, "port": 6380 });
+    }
+    if TcpStream::connect("127.0.0.1:6379").is_ok() {
+        return serde_json::json!({ "ok": true, "port": 6379 });
+    }
+    serde_json::json!({ "ok": false, "port": 0 })
+}
+
+/// Run `pip install -r signal/requirements.txt` — installs all Python deps.
+/// This can take several minutes on a fresh machine (torch/transformers are large).
+#[tauri::command]
+fn install_python_deps(app: AppHandle) -> Result<String, String> {
+    let root = resolve_project_root(&app)
+        .ok_or_else(|| "Cannot locate project root".to_string())?;
+    let req = root.join("signal").join("requirements.txt");
+    if !req.exists() {
+        return Err(format!("requirements.txt not found at {}", req.display()));
+    }
+    // Try pip, pip3 in order
+    for pip in &["pip", "pip3"] {
+        let result = std::process::Command::new(pip)
+            .args(["install", "-r", req.to_str().unwrap_or("")])
+            .output();
+        match result {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                if out.status.success() {
+                    return Ok(stdout);
+                } else {
+                    return Err(stderr);
+                }
+            }
+            Err(_) => continue,
+        }
+    }
+    Err("pip not found — install Python 3.11 from python.org".to_string())
+}
+
 /// Returns true if the user has already completed first-run key setup.
 #[tauri::command]
 fn is_setup_complete(app: AppHandle) -> bool {
@@ -460,6 +520,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             is_setup_complete,
             activate,
+            check_python,
+            check_redis,
+            install_python_deps,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { .. } = event {
