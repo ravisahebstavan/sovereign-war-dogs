@@ -67,10 +67,17 @@ impl RedisBus {
 
 /// Read signals and contract events that Python writes to sovereign:events
 /// and relay them into the local broadcast so the WS dashboard sees them.
+///
+/// Uses StreamReadReply — the typed API from the `streams` feature — instead of
+/// manual redis::Value pattern matching, which was silently dropping every message
+/// due to incorrect traversal of the nested XREAD response structure.
 pub async fn relay_python_events(
     redis_url: String,
     tx: broadcast::Sender<Arc<Event>>,
+    history: crate::ws_server::History,
 ) {
+    use redis::streams::StreamReadReply;
+
     let client = match redis::Client::open(redis_url.as_str()) {
         Ok(c) => c,
         Err(e) => { error!("relay Redis client error: {e}"); return; }
@@ -82,12 +89,17 @@ pub async fn relay_python_events(
 
     info!("Python event relay started — watching {}", crate::REDIS_STREAM_EVENTS);
 
+    // Start from the beginning so we pick up any signals written before this
+    // function started (e.g. during the Python news_poller warm-up cycle).
     let mut last_id = "0-0".to_string();
+    let mut relayed: u64 = 0;
 
     loop {
-        let results: redis::RedisResult<Vec<redis::Value>> = redis::cmd("XREAD")
+        // Use StreamReadReply — it handles the nested XREAD response structure
+        // correctly and gives us typed access to each message's field map.
+        let result: redis::RedisResult<StreamReadReply> = redis::cmd("XREAD")
             .arg("BLOCK")
-            .arg(500u64)
+            .arg(500u64)   // block up to 500 ms, then loop
             .arg("COUNT")
             .arg(100u64)
             .arg("STREAMS")
@@ -96,37 +108,40 @@ pub async fn relay_python_events(
             .query_async(&mut conn)
             .await;
 
-        match results {
+        match result {
             Err(e) => {
-                error!("XREAD error: {e}");
+                error!("relay XREAD error: {e} — retrying in 1s");
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
-            Ok(data) => {
-                for stream_data in &data {
-                    if let redis::Value::Bulk(streams) = stream_data {
-                        for stream in streams {
-                            if let redis::Value::Bulk(entries) = stream {
-                                if entries.len() >= 2 {
-                                    if let redis::Value::Bulk(messages) = &entries[1] {
-                                        for msg in messages {
-                                            if let redis::Value::Bulk(parts) = msg {
-                                                if let (
-                                                    redis::Value::Data(id_bytes),
-                                                    redis::Value::Bulk(fields),
-                                                ) = (&parts[0], &parts[1])
-                                                {
-                                                    last_id = String::from_utf8_lossy(id_bytes).to_string();
-                                                    if fields.len() >= 2 {
-                                                        if let redis::Value::Data(json_bytes) = &fields[1] {
-                                                            if let Ok(event) = serde_json::from_slice::<Event>(json_bytes) {
-                                                                let _ = tx.send(Arc::new(event));
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
+            Ok(reply) => {
+                for stream_key in reply.keys {
+                    for entry in stream_key.ids {
+                        last_id = entry.id.clone();
+
+                        // Each Redis Stream entry has a "data" field containing
+                        // the JSON-serialised Event written by Python engine.py.
+                        if let Some(redis::Value::Data(json_bytes)) = entry.map.get("data") {
+                            match serde_json::from_slice::<Event>(json_bytes) {
+                                Ok(event) => {
+                                    relayed += 1;
+                                    if relayed <= 5 || relayed % 50 == 0 {
+                                        info!(
+                                            "relay: forwarded event #{relayed} id={} kind={:?}",
+                                            last_id,
+                                            std::mem::discriminant(&event.payload),
+                                        );
                                     }
+                                    let ev = Arc::new(event);
+                                    push_history(&history, ev.clone()).await;
+                                    let _ = tx.send(ev);
+                                }
+                                Err(e) => {
+                                    // Log the first 300 chars so we can diagnose schema mismatches
+                                    error!(
+                                        "relay: JSON parse error: {e} | raw={}",
+                                        String::from_utf8_lossy(json_bytes)
+                                            .chars().take(300).collect::<String>()
+                                    );
                                 }
                             }
                         }
@@ -135,4 +150,11 @@ pub async fn relay_python_events(
             }
         }
     }
+}
+
+/// Push an event into the history ring buffer (max 200 entries).
+async fn push_history(history: &crate::ws_server::History, ev: Arc<Event>) {
+    let mut h = history.write().await;
+    if h.len() >= 200 { h.pop_front(); }
+    h.push_back(ev);
 }

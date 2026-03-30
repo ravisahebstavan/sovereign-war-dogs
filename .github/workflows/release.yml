@@ -1,0 +1,156 @@
+name: SOVEREIGN — Release Build
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: Build & Package (Windows)
+    runs-on: windows-latest
+
+    steps:
+      # ------------------------------------------------------------------
+      # 1. Checkout full history so tags are available for release naming.
+      # ------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ------------------------------------------------------------------
+      # 2. Rust toolchain (stable)
+      # ------------------------------------------------------------------
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      # ------------------------------------------------------------------
+      # 3. Cache Cargo registry & build artefacts
+      # ------------------------------------------------------------------
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sovereign/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('sovereign/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # ------------------------------------------------------------------
+      # 4. Build sovereign-core
+      # ------------------------------------------------------------------
+      - name: Build sovereign-core (release)
+        run: cargo build --release
+        working-directory: sovereign
+
+      # ------------------------------------------------------------------
+      # 5. Copy sovereign-core.exe into Tauri sidecar directory
+      #    Tauri expects sidecars in src-tauri/binaries/ and the file name
+      #    must include the target triple when bundled.  We copy both the
+      #    plain name (used by our lib.rs path search) and the triple-
+      #    suffixed name so `tauri build` can pick it up automatically.
+      # ------------------------------------------------------------------
+      - name: Prepare Tauri sidecar binary
+        shell: pwsh
+        run: |
+          $triple = rustc -vV | Select-String "host:" | ForEach-Object { $_.ToString().Split()[1] }
+          New-Item -ItemType Directory -Force -Path ui/src-tauri/binaries | Out-Null
+          Copy-Item sovereign/target/release/sovereign-core.exe `
+            ui/src-tauri/binaries/sovereign-core.exe
+          Copy-Item sovereign/target/release/sovereign-core.exe `
+            "ui/src-tauri/binaries/sovereign-core-$triple.exe"
+          Write-Host "Sidecar target triple: $triple"
+
+      # ------------------------------------------------------------------
+      # 6. Node.js 20
+      # ------------------------------------------------------------------
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      # ------------------------------------------------------------------
+      # 7. Install JS dependencies
+      # ------------------------------------------------------------------
+      - name: Install npm dependencies
+        run: npm install
+        working-directory: ui
+
+      # ------------------------------------------------------------------
+      # 8. Python 3.11 (required by tauri-cli when it invokes before-build
+      #    hooks; also validates that Python is available for the bundle).
+      # ------------------------------------------------------------------
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ------------------------------------------------------------------
+      # 9. Build the Tauri app (produces NSIS .exe installer and .msi)
+      # ------------------------------------------------------------------
+      - name: Build Tauri app
+        run: npm run tauri build
+        working-directory: ui
+        env:
+          # Prevents Tauri build from opening a browser window on CI.
+          CI: "true"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      # ------------------------------------------------------------------
+      # 10. Locate installer artefacts
+      # ------------------------------------------------------------------
+      - name: Locate installer artefacts
+        id: artefacts
+        shell: pwsh
+        run: |
+          $bundleDir = "ui/src-tauri/target/release/bundle"
+          $nsis  = Get-ChildItem -Recurse "$bundleDir/nsis"  -Filter "*.exe"  -ErrorAction SilentlyContinue | Select-Object -First 1
+          $msi   = Get-ChildItem -Recurse "$bundleDir/msi"   -Filter "*.msi"  -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($nsis) { Write-Host "NSIS: $($nsis.FullName)"; echo "nsis_path=$($nsis.FullName)" >> $env:GITHUB_OUTPUT }
+          if ($msi)  { Write-Host "MSI:  $($msi.FullName)";  echo "msi_path=$($msi.FullName)"   >> $env:GITHUB_OUTPUT }
+
+      # ------------------------------------------------------------------
+      # 11. Upload artefacts (available on every push to main and on tags)
+      # ------------------------------------------------------------------
+      - name: Upload NSIS installer
+        if: steps.artefacts.outputs.nsis_path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: SOVEREIGN-Setup-Windows
+          path: ${{ steps.artefacts.outputs.nsis_path }}
+          if-no-files-found: warn
+
+      - name: Upload MSI installer
+        if: steps.artefacts.outputs.msi_path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: SOVEREIGN-MSI-Windows
+          path: ${{ steps.artefacts.outputs.msi_path }}
+          if-no-files-found: warn
+
+      # ------------------------------------------------------------------
+      # 12. Create GitHub Release on version tag pushes
+      # ------------------------------------------------------------------
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: SOVEREIGN ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            ${{ steps.artefacts.outputs.nsis_path }}
+            ${{ steps.artefacts.outputs.msi_path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

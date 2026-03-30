@@ -4,8 +4,8 @@ mod types;
 mod ws_server;
 
 use anyhow::Result;
-use std::sync::Arc;
-use tokio::sync::broadcast;
+use std::{collections::VecDeque, sync::Arc};
+use tokio::sync::{broadcast, RwLock};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -35,6 +35,7 @@ async fn main() -> Result<()> {
     info!("SOVEREIGN CORE starting — connecting to Redis at {redis_url}");
 
     let (tx, _) = broadcast::channel::<Arc<types::Event>>(WS_BROADCAST_CAPACITY);
+    let history: ws_server::History = Arc::new(RwLock::new(VecDeque::with_capacity(200)));
 
     let redis = redis::Client::open(redis_url.as_str())
         .expect("invalid Redis URL")
@@ -48,18 +49,46 @@ async fn main() -> Result<()> {
 
     let bus1 = bus.clone();
     let bus2 = bus.clone();
+    let bus3 = bus.clone();
     let tx1  = tx.clone();
     let tx2  = tx.clone();
     let tx3  = tx.clone();
     let ru   = redis_url.clone();
 
-    tokio::select! {
-        _ = tokio::spawn(finnhub::run_news(finnhub_key.clone(), bus1)) => {}
-        _ = tokio::spawn(finnhub::run_trades(finnhub_key.clone(), bus2)) => {}
-        _ = tokio::spawn(ws_server::run("0.0.0.0:9001".to_string(), tx1)) => {}
-        _ = tokio::spawn(latency_monitor(tx2.subscribe(), bus.clone())) => {}
-        _ = tokio::spawn(redis_bus::relay_python_events(ru, tx3)) => {}
-    }
+    // Each task is wrapped in a supervisor loop so crashes are recovered automatically.
+    let key1 = finnhub_key.clone();
+    let key2 = finnhub_key.clone();
+    let key3 = finnhub_key.clone();
+
+    tokio::join!(
+        // General news — broad market headlines
+        tokio::spawn(async move {
+            loop {
+                finnhub::run_news(key1.clone(), bus1.clone()).await;
+                tracing::error!("general news poller exited — restarting in 5s");
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            }
+        }),
+        // Company-specific news — direct feed per watchlist ticker (PRIMARY signal source)
+        tokio::spawn(async move {
+            loop {
+                finnhub::run_company_news(key2.clone(), bus3.clone()).await;
+                tracing::error!("company news poller exited — restarting in 5s");
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            }
+        }),
+        // Quote poller — live prices for watchlist
+        tokio::spawn(async move {
+            loop {
+                finnhub::run_trades(key3.clone(), bus2.clone()).await;
+                tracing::error!("quote poller exited — restarting in 5s");
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            }
+        }),
+        tokio::spawn(ws_server::run("0.0.0.0:9001".to_string(), tx1, history.clone())),
+        tokio::spawn(latency_monitor(tx2.subscribe(), bus.clone())),
+        tokio::spawn(redis_bus::relay_python_events(ru, tx3, history.clone())),
+    );
 
     Ok(())
 }

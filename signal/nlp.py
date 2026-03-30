@@ -48,10 +48,29 @@ class NLPPipeline:
           +1.0 = fully positive
            0.0 = neutral
           -1.0 = fully negative
+        """
+        return self.sentiment_full(text)["scalar"]
 
-        FinBERT outputs 3 labels: positive / negative / neutral.
-        We convert to a scalar: score = P(positive) - P(negative)
+    def sentiment_full(self, text: str) -> dict:
+        """
+        Returns all FinBERT class probabilities plus a scalar score.
+
+        Keys:
+          scalar      float in [-1, 1]  — P(positive) - P(negative)
+          positive    float in [0, 1]   — raw P(positive)
+          negative    float in [0, 1]   — raw P(negative)
+          neutral     float in [0, 1]   — raw P(neutral)
+          confidence  float in [0, 1]   — max class probability (model certainty)
         """
         results = self._sentiment(text[:512])[0]  # list of {label, score}
         scores = {r["label"]: r["score"] for r in results}
-        return scores.get("positive", 0) - scores.get("negative", 0)
+        pos = scores.get("positive", 0.0)
+        neg = scores.get("negative", 0.0)
+        neu = scores.get("neutral",  0.0)
+        return {
+            "scalar":     pos - neg,
+            "positive":   pos,
+            "negative":   neg,
+            "neutral":    neu,
+            "confidence": max(pos, neg, neu),
+        }
