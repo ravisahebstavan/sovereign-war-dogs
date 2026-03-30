@@ -10,12 +10,14 @@ echo  ============================================
 echo.
 
 REM ── 1. Redis ──────────────────────────────────────────────────────────────────
-echo [1/6] Starting Redis...
-if exist "C:\Program Files\Redis\redis-server.exe" (
+echo [1/6] Starting Redis (5.0 with Streams support)...
+if exist "%USERPROFILE%\Downloads\Redis5\redis-server.exe" (
+    start "Redis5" /d "%USERPROFILE%\Downloads\Redis5" cmd /k "redis-server.exe --port 6380"
+) else if exist "C:\Program Files\Redis\redis-server.exe" (
+    echo WARNING: Using Redis 3.0 - Streams may not work. Install Redis 5 for full support.
     start "Redis" /d "C:\Program Files\Redis" cmd /k "redis-server.exe"
 ) else (
-    echo ERROR: Redis not found at C:\Program Files\Redis\
-    echo Install with:  winget install Redis.Redis
+    echo ERROR: Redis not found. Download Redis 5 portable to %USERPROFILE%\Downloads\Redis5\
     pause
     exit /b 1
 )

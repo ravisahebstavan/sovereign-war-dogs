@@ -47,7 +47,6 @@ class AlpacaExecutor:
             )
         except Exception as e:
             log.warning(f"Could not fetch account info: {e} — continuing anyway")
-            self._client = None
 
     async def submit(
         self,
