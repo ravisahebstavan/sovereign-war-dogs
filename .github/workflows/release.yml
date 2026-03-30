@@ -69,7 +69,34 @@ jobs:
           Write-Host "Sidecar target triple: $triple"
 
       # ------------------------------------------------------------------
-      # 6. Node.js 20
+      # 6. Bundle Python scripts + Redis into Tauri resources
+      #    These get copied into the installer so new users don't need
+      #    to clone the repo — the app is fully self-contained.
+      # ------------------------------------------------------------------
+      - name: Bundle Python scripts into resources
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path ui/src-tauri/resources/signal    | Out-Null
+          New-Item -ItemType Directory -Force -Path ui/src-tauri/resources/contracts | Out-Null
+          Copy-Item signal/*.py            ui/src-tauri/resources/signal/
+          Copy-Item signal/requirements.txt ui/src-tauri/resources/signal/
+          Copy-Item contracts/*.py         ui/src-tauri/resources/contracts/ -ErrorAction SilentlyContinue
+          Copy-Item contracts/requirements.txt ui/src-tauri/resources/contracts/ -ErrorAction SilentlyContinue
+          Write-Host "Bundled Python scripts:"
+          Get-ChildItem ui/src-tauri/resources -Recurse -File | Select-Object FullName
+
+      - name: Download & bundle Redis 5 portable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path ui/src-tauri/resources/redis | Out-Null
+          $url = "https://github.com/tporadowski/redis/releases/download/v5.0.14.1/Redis-x64-5.0.14.1.zip"
+          Invoke-WebRequest -Uri $url -OutFile Redis.zip -UseBasicParsing
+          Expand-Archive -Path Redis.zip -DestinationPath ui/src-tauri/resources/redis/ -Force
+          Write-Host "Redis contents:"
+          Get-ChildItem ui/src-tauri/resources/redis -Recurse | Select-Object FullName
+
+      # ------------------------------------------------------------------
+      # 7. Node.js 20
       # ------------------------------------------------------------------
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
@@ -79,7 +106,7 @@ jobs:
           cache-dependency-path: ui/package-lock.json
 
       # ------------------------------------------------------------------
-      # 7. Install JS dependencies
+      # 8. Install JS dependencies
       # ------------------------------------------------------------------
       - name: Install npm dependencies
         run: npm install

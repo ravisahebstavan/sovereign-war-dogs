@@ -210,47 +210,125 @@ fn load_dotenv(path: &Path) {
 }
 
 // ---------------------------------------------------------------------------
+// Resource & runtime helpers
+// ---------------------------------------------------------------------------
+
+/// Find the root directory where bundled resources (signal/, contracts/, redis/)
+/// live. Checks Tauri resource_dir first (installed app), then walks up from
+/// the exe / cwd (dev mode).
+fn find_resource_root(app: &AppHandle) -> Option<PathBuf> {
+    if let Ok(res_dir) = app.path().resource_dir() {
+        // Array-form resources preserve path under resource_dir directly
+        if res_dir.join("signal").is_dir() { return Some(res_dir.clone()); }
+        // Some Tauri layouts nest under "resources/"
+        let sub = res_dir.join("resources");
+        if sub.join("signal").is_dir() { return Some(sub); }
+    }
+    None
+}
+
+/// Find a Python script, preferring bundled resources over dev project root.
+fn find_script(resource_root: Option<&Path>, project_root: Option<&Path>, subdir: &str, name: &str) -> Option<PathBuf> {
+    if let Some(r) = resource_root {
+        let p = r.join(subdir).join(name);
+        if p.exists() { return Some(p); }
+    }
+    if let Some(r) = project_root {
+        let p = r.join(subdir).join(name);
+        if p.exists() { return Some(p); }
+    }
+    None
+}
+
+/// Locate redis-server.exe: bundled → user portable → system install.
+fn find_redis_exe(app: &AppHandle) -> Option<PathBuf> {
+    // 1. Bundled inside the installer resources
+    if let Some(res) = find_resource_root(app) {
+        let c = res.join("redis").join("redis-server.exe");
+        if c.exists() { return Some(c); }
+        // Handle zip-extracted subdirectory (e.g. Redis-x64-5.0.14.1/)
+        if let Ok(entries) = std::fs::read_dir(res.join("redis")) {
+            for e in entries.flatten() {
+                if e.file_name().to_string_lossy() == "redis-server.exe" {
+                    return Some(e.path());
+                }
+                if e.path().is_dir() {
+                    let nested = e.path().join("redis-server.exe");
+                    if nested.exists() { return Some(nested); }
+                }
+            }
+        }
+    }
+    // 2. User's portable Redis in Downloads/Redis5
+    if let Ok(home) = std::env::var("USERPROFILE") {
+        let p = PathBuf::from(&home).join("Downloads").join("Redis5").join("redis-server.exe");
+        if p.exists() { return Some(p); }
+    }
+    // 3. System installation
+    let sys = PathBuf::from(r"C:\Program Files\Redis\redis-server.exe");
+    if sys.exists() { return Some(sys); }
+    None
+}
+
+/// Return the venv Python executable stored in the app config dir.
+fn app_venv_python(app: &AppHandle) -> Option<PathBuf> {
+    let venv = app.path().app_config_dir().ok()?.join("venv");
+    let py = venv_python(&venv);
+    if py.exists() { Some(py) } else { None }
+}
+
+/// Best Python binary available: app venv → project venv → system.
+fn best_python(app: &AppHandle, script_dir: Option<&Path>) -> PathBuf {
+    if let Some(py) = app_venv_python(app) { return py; }
+    if let Some(dir) = script_dir {
+        let venv_py = venv_python(&dir.join(".venv"));
+        if venv_py.exists() { return venv_py; }
+    }
+    PathBuf::from("python")
+}
+
+// ---------------------------------------------------------------------------
 // Service launcher
 // ---------------------------------------------------------------------------
 
 fn spawn_services(app: &AppHandle) -> Vec<Child> {
     let mut children: Vec<Child> = Vec::new();
 
-    // ---- Resolve project root ----
-    let project_root = resolve_project_root(app);
+    let project_root   = resolve_project_root(app);
+    let resource_root  = find_resource_root(app);
 
     // ---- Load .env ----
-    // Prefer app config dir (e.g., %APPDATA%/com.wardog.sovereign/), fall back
-    // to project root.
     let mut env_loaded = false;
     if let Ok(config_dir) = app.path().app_config_dir() {
         let env_path = config_dir.join(".env");
-        if env_path.exists() {
-            load_dotenv(&env_path);
-            env_loaded = true;
-        }
+        if env_path.exists() { load_dotenv(&env_path); env_loaded = true; }
     }
     if !env_loaded {
         if let Some(root) = &project_root {
             let env_path = root.join(".env");
-            if env_path.exists() {
-                load_dotenv(&env_path);
-            }
+            if env_path.exists() { load_dotenv(&env_path); }
         }
     }
 
     // ---- 1. Redis ----
-    let redis_exe = PathBuf::from(r"C:\Program Files\Redis\redis-server.exe");
-    if redis_exe.exists() {
-        match Command::new(&redis_exe).spawn() {
+    // Only start Redis if it's not already listening on 6380.
+    let redis_already_up = std::net::TcpStream::connect("127.0.0.1:6380").is_ok()
+        || std::net::TcpStream::connect("127.0.0.1:6379").is_ok();
+
+    if redis_already_up {
+        eprintln!("[SOVEREIGN] Redis already running — skipping launch");
+    } else if let Some(redis_exe) = find_redis_exe(app) {
+        match Command::new(&redis_exe).args(["--port", "6380"]).spawn() {
             Ok(child) => {
-                eprintln!("[SOVEREIGN] Redis started (pid {})", child.id());
+                eprintln!("[SOVEREIGN] Redis started from {} (pid {})", redis_exe.display(), child.id());
                 children.push(child);
+                // Give Redis a moment to bind before Python services try to connect.
+                thread::sleep(Duration::from_millis(800));
             }
             Err(e) => eprintln!("[SOVEREIGN] Failed to start Redis: {e}"),
         }
     } else {
-        eprintln!("[SOVEREIGN] Redis not found at {}, assuming already running", redis_exe.display());
+        eprintln!("[SOVEREIGN] redis-server.exe not found — install Redis 5 or run start_sovereign.bat");
     }
 
     // ---- 2. sovereign-core ----
@@ -266,94 +344,34 @@ fn spawn_services(app: &AppHandle) -> Vec<Child> {
         eprintln!("[SOVEREIGN] sovereign-core.exe not found — WebSocket feed will be unavailable");
     }
 
-    // For the Python services we need a project root; bail out early with a
-    // warning rather than panicking if we genuinely can't find one.
-    let root = match &project_root {
-        Some(r) => r.clone(),
-        None => {
-            eprintln!("[SOVEREIGN] Could not locate project root — Python services will not start");
-            return children;
-        }
-    };
+    // ---- Python services ----
+    // Resolve the Python binary to use (app venv → project venv → system).
+    let signal_dir = resource_root.as_deref()
+        .map(|r| r.join("signal"))
+        .or_else(|| project_root.as_ref().map(|r| r.join("signal")));
+    let python = best_python(app, signal_dir.as_deref());
 
-    // ---- 3. signal/news_poller.py ----
-    {
-        let venv = root.join("signal").join(".venv");
-        let python = venv_python(&venv);
-        let script = root.join("signal").join("news_poller.py");
-        if script.exists() {
-            let py_bin = if python.exists() {
-                python
-            } else {
-                PathBuf::from("python")
-            };
-            match Command::new(&py_bin)
-                .arg(&script)
-                .current_dir(&root)
-                .spawn()
-            {
-                Ok(child) => {
-                    eprintln!("[SOVEREIGN] news_poller.py started (pid {})", child.id());
-                    children.push(child);
-                }
-                Err(e) => eprintln!("[SOVEREIGN] Failed to start news_poller.py: {e}"),
-            }
-        } else {
-            eprintln!("[SOVEREIGN] news_poller.py not found at {}", script.display());
-        }
-    }
+    let res = resource_root.as_deref();
+    let proj = project_root.as_deref();
 
-    // ---- 4. contracts/poller.py ----
-    {
-        let venv = root.join("contracts").join(".venv");
-        let python = venv_python(&venv);
-        let script = root.join("contracts").join("poller.py");
-        if script.exists() {
-            let py_bin = if python.exists() {
-                python
-            } else {
-                PathBuf::from("python")
-            };
-            match Command::new(&py_bin)
-                .arg(&script)
-                .current_dir(&root)
-                .spawn()
-            {
-                Ok(child) => {
-                    eprintln!("[SOVEREIGN] contracts/poller.py started (pid {})", child.id());
-                    children.push(child);
+    for (subdir, script_name, label) in &[
+        ("signal",    "news_poller.py", "news_poller"),
+        ("contracts", "poller.py",      "contracts/poller"),
+        ("signal",    "engine.py",      "engine"),
+    ] {
+        match find_script(res, proj, subdir, script_name) {
+            Some(script) => {
+                // Set the script's directory as cwd so relative imports work.
+                let cwd = script.parent().unwrap_or(&script).to_path_buf();
+                match Command::new(&python).arg(&script).current_dir(&cwd).spawn() {
+                    Ok(child) => {
+                        eprintln!("[SOVEREIGN] {label} started (pid {})", child.id());
+                        children.push(child);
+                    }
+                    Err(e) => eprintln!("[SOVEREIGN] Failed to start {label}: {e}"),
                 }
-                Err(e) => eprintln!("[SOVEREIGN] Failed to start contracts/poller.py: {e}"),
             }
-        } else {
-            eprintln!("[SOVEREIGN] contracts/poller.py not found at {}", script.display());
-        }
-    }
-
-    // ---- 5. signal/engine.py ----
-    {
-        let venv = root.join("signal").join(".venv");
-        let python = venv_python(&venv);
-        let script = root.join("signal").join("engine.py");
-        if script.exists() {
-            let py_bin = if python.exists() {
-                python
-            } else {
-                PathBuf::from("python")
-            };
-            match Command::new(&py_bin)
-                .arg(&script)
-                .current_dir(&root)
-                .spawn()
-            {
-                Ok(child) => {
-                    eprintln!("[SOVEREIGN] signal/engine.py started (pid {})", child.id());
-                    children.push(child);
-                }
-                Err(e) => eprintln!("[SOVEREIGN] Failed to start signal/engine.py: {e}"),
-            }
-        } else {
-            eprintln!("[SOVEREIGN] signal/engine.py not found at {}", script.display());
+            None => eprintln!("[SOVEREIGN] {script_name} not found — skipping"),
         }
     }
 
@@ -405,35 +423,47 @@ fn check_redis() -> serde_json::Value {
     serde_json::json!({ "ok": false, "port": 0 })
 }
 
-/// Run `pip install -r signal/requirements.txt` — installs all Python deps.
+/// Run `pip install` into a persistent venv stored in the app config dir.
+/// Creates the venv first if it doesn't exist.
 /// This can take several minutes on a fresh machine (torch/transformers are large).
 #[tauri::command]
 fn install_python_deps(app: AppHandle) -> Result<String, String> {
-    let root = resolve_project_root(&app)
-        .ok_or_else(|| "Cannot locate project root".to_string())?;
-    let req = root.join("signal").join("requirements.txt");
-    if !req.exists() {
-        return Err(format!("requirements.txt not found at {}", req.display()));
+    // 1. Find requirements.txt — bundled resources first, then dev project root.
+    let req = find_resource_root(&app)
+        .map(|r| r.join("signal").join("requirements.txt"))
+        .filter(|p| p.exists())
+        .or_else(|| {
+            resolve_project_root(&app)
+                .map(|r| r.join("signal").join("requirements.txt"))
+                .filter(|p| p.exists())
+        })
+        .ok_or_else(|| "requirements.txt not found — is SOVEREIGN installed correctly?".to_string())?;
+
+    // 2. Create venv in %APPDATA%/com.wardog.sovereign/venv/
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&config_dir).map_err(|e| e.to_string())?;
+    let venv = config_dir.join("venv");
+
+    let venv_out = std::process::Command::new("python")
+        .args(["-m", "venv", venv.to_str().unwrap_or("")])
+        .output()
+        .map_err(|e| format!("Failed to create Python venv: {e}"))?;
+    if !venv_out.status.success() {
+        return Err(String::from_utf8_lossy(&venv_out.stderr).to_string());
     }
-    // Try pip, pip3 in order
-    for pip in &["pip", "pip3"] {
-        let result = std::process::Command::new(pip)
-            .args(["install", "-r", req.to_str().unwrap_or("")])
-            .output();
-        match result {
-            Ok(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-                if out.status.success() {
-                    return Ok(stdout);
-                } else {
-                    return Err(stderr);
-                }
-            }
-            Err(_) => continue,
-        }
+
+    // 3. pip install using the venv's own pip
+    let pip = venv.join("Scripts").join("pip.exe");
+    let out = std::process::Command::new(&pip)
+        .args(["install", "-r", req.to_str().unwrap_or(""), "--no-warn-script-location"])
+        .output()
+        .map_err(|e| format!("pip failed: {e}"))?;
+
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).to_string())
     }
-    Err("pip not found — install Python 3.11 from python.org".to_string())
 }
 
 /// Returns true if the user has already completed first-run key setup.
