@@ -9,7 +9,7 @@ use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 // Analytics — fire-and-forget launch ping to Google Sheets
 // ---------------------------------------------------------------------------
 const ANALYTICS_URL: &str = "https://script.google.com/macros/s/AKfycbxaULtARcNkE_g2UrYn6uL8vn_qCu82epOHSEjb8AnXJI0rrKO0Yty3_yN6BL20IrclfA/exec";
-const APP_VERSION:   &str = "1.0.5";
+const APP_VERSION:   &str = "1.1.0";
 
 /// Read or create a persistent session UUID stored in the app's config dir.
 fn session_id(app: &AppHandle) -> String {
