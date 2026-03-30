@@ -373,40 +373,97 @@ fn kill_all(handles: &Arc<ServiceHandles>) {
 }
 
 // ---------------------------------------------------------------------------
+// Setup commands — invoked from the React onboarding page
+// ---------------------------------------------------------------------------
+
+/// Returns true if the user has already completed first-run key setup.
+#[tauri::command]
+fn is_setup_complete(app: AppHandle) -> bool {
+    if let Ok(config_dir) = app.path().app_config_dir() {
+        let env_path = config_dir.join(".env");
+        if let Ok(contents) = std::fs::read_to_string(&env_path) {
+            let has_finnhub = contents.lines().any(|l| {
+                l.starts_with("FINNHUB_API_KEY=") && l.len() > "FINNHUB_API_KEY=".len()
+            });
+            let has_alpaca = contents.lines().any(|l| {
+                l.starts_with("ALPACA_API_KEY=") && l.len() > "ALPACA_API_KEY=".len()
+            });
+            return has_finnhub && has_alpaca;
+        }
+    }
+    false
+}
+
+/// Write the user's API keys to the app config dir, then start all services.
+/// This is the single call the onboarding page makes when the user hits Launch.
+#[tauri::command]
+fn activate(
+    app: AppHandle,
+    handles: tauri::State<Arc<ServiceHandles>>,
+    finnhub_key: String,
+    alpaca_key: String,
+    alpaca_secret: String,
+) -> Result<(), String> {
+    // 1. Persist keys to %APPDATA%/com.wardog.sovereign/.env
+    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&config_dir).map_err(|e| e.to_string())?;
+    let content = format!(
+        "FINNHUB_API_KEY={}\nALPACA_API_KEY={}\nALPACA_SECRET_KEY={}\nREDIS_URL=redis://localhost:6380\n",
+        finnhub_key.trim(),
+        alpaca_key.trim(),
+        alpaca_secret.trim(),
+    );
+    std::fs::write(config_dir.join(".env"), &content).map_err(|e| e.to_string())?;
+
+    // 2. Load the keys into the current process environment so spawn_services
+    //    picks them up without needing a restart.
+    load_dotenv(&config_dir.join(".env"));
+
+    // 3. Spawn all backend services.
+    let new_children = spawn_services(&app);
+    handles.0.lock().unwrap().extend(new_children);
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            // Fire analytics ping (background thread — non-blocking).
             ping_analytics(app.handle());
 
-            // Spawn all backend services immediately.
-            let children = spawn_services(app.handle());
-            app.manage(Arc::new(ServiceHandles(Mutex::new(children))));
+            // Register service handle store (may be empty until activate() is called).
+            app.manage(Arc::new(ServiceHandles(Mutex::new(Vec::new()))));
 
-            // Retrieve the main window so we can show it after a short delay.
             let window = app
                 .get_webview_window("main")
                 .expect("main window not found");
 
-            // Spawn a thread that waits 3 seconds (letting services initialise)
-            // and then makes the window visible.
-            thread::spawn(move || {
-                thread::sleep(Duration::from_secs(3));
-                if let Err(e) = window.show() {
-                    eprintln!("[SOVEREIGN] Failed to show window: {e}");
-                }
-            });
+            if is_setup_complete(app.handle().clone()) {
+                // Returning user — spawn services then reveal window after init.
+                let children = spawn_services(app.handle());
+                app.state::<Arc<ServiceHandles>>().0.lock().unwrap().extend(children);
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_secs(3));
+                    let _ = window.show();
+                });
+            } else {
+                // First run — show onboarding page immediately, no services yet.
+                let _ = window.show();
+            }
 
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![
+            is_setup_complete,
+            activate,
+        ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { .. } = event {
-                let handles = window
-                    .app_handle()
-                    .state::<Arc<ServiceHandles>>();
+                let handles = window.app_handle().state::<Arc<ServiceHandles>>();
                 kill_all(&handles);
             }
         })

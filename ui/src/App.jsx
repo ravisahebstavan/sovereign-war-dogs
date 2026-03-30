@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import Setup from "./Setup.jsx";
 
 // ─── WebSocket hook ───────────────────────────────────────────────────────────
 
@@ -799,9 +800,9 @@ function SignalEmptyState({ connected }) {
   );
 }
 
-// ─── Main App ─────────────────────────────────────────────────────────────────
+// ─── Dashboard (inner) ────────────────────────────────────────────────────────
 
-export default function App() {
+function Dashboard() {
   const { signals, contracts, trades, latency, connected, refresh } = useSovereignWS("ws://localhost:9001/ws");
   const [selectedSignal, setSelectedSignal] = useState(null);
 
@@ -949,4 +950,25 @@ export default function App() {
       />
     </div>
   );
+}
+
+// ─── Root App — setup gate ────────────────────────────────────────────────────
+
+export default function App() {
+  const [setupDone, setSetupDone] = useState(null); // null=loading, false=needs setup, true=ready
+
+  useEffect(() => {
+    if (window.__TAURI__) {
+      import("@tauri-apps/api/core")
+        .then(({ invoke }) => invoke("is_setup_complete"))
+        .then(ok => setSetupDone(ok))
+        .catch(() => setSetupDone(true));
+    } else {
+      setSetupDone(true); // plain browser / dev mode — skip gate
+    }
+  }, []);
+
+  if (setupDone === null) return null;
+  if (!setupDone) return <Setup onComplete={() => setSetupDone(true)} />;
+  return <Dashboard />;
 }
