@@ -289,6 +289,39 @@ SOVEREIGN executes trades exclusively on an **Alpaca paper trading account** —
 
 ---
 
+## Automation (zero-fee, free architecture)
+
+### Docker compose all-in-one
+
+Use `infra/docker-compose.full.yml`:
+
+- Redis
+- sovereign-core (Rust)
+- signal/news_poller.py
+- signal/engine.py
+- contracts/poller.py
+- ui (Vite)
+
+Run:
+
+```bash
+cd infra
+docker compose -f docker-compose.full.yml up --build
+```
+
+### One-click local runner
+
+- Windows: `run_all.bat`
+- macOS/Linux: `bash run_all.sh`
+
+### CI (GitHub Actions)
+
+- `.github/workflows/ci.yml` includes:
+  - rust `cargo check`
+  - python requirements install + compile checks
+  - UI `npm ci` + build
+  - minimal smoke test: `python signal/diagnose.py`
+
 ## License
 
 MIT — use it, fork it, build on it.

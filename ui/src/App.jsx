@@ -3,6 +3,9 @@ import Setup, { isBrowserSetupComplete } from "./Setup.jsx";
 
 // ─── WebSocket hook ───────────────────────────────────────────────────────────
 
+const MAX_SIGNAL_HISTORY   = 500;
+const MAX_CONTRACT_HISTORY = 100;
+
 function useSovereignWS(url) {
   const [signals, setSignals]     = useState([]);
   const [contracts, setContracts] = useState([]);
@@ -27,12 +30,12 @@ function useSovereignWS(url) {
           if (p.kind === "signal")
             setSignals(prev => {
               if (prev.some(s => s._id === ev.id)) return prev; // dedupe ring-buffer replay
-              return [{ ...p, _id: ev.id, _ts: Date.now() }, ...prev].slice(0, 100);
+              return [{ ...p, _id: ev.id, _ts: Date.now() }, ...prev].slice(0, MAX_SIGNAL_HISTORY);
             });
           else if (p.kind === "contract")
             setContracts(prev => {
               if (prev.some(c => c._id === ev.id)) return prev;
-              return [{ ...p, _id: ev.id, _ts: Date.now() }, ...prev].slice(0, 50);
+              return [{ ...p, _id: ev.id, _ts: Date.now() }, ...prev].slice(0, MAX_CONTRACT_HISTORY);
             });
           else if (p.kind === "trade")
             setTrades(prev => ({ ...prev, [p.ticker]: { price: p.price, volume: p.volume, ts: Date.now() } }));

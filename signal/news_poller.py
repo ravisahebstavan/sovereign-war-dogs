@@ -132,14 +132,14 @@ async def run():
     redis = await connect_redis(REDIS_URL)
 
     # TTL-based seen cache: uid -> expiry timestamp
-    # Articles expire after 2 hours so they recycle through the engine continuously
+    # Articles are kept in the seen cache for a long window to avoid replaying
+    # the same historical article too frequently (which can look like churn).
     seen_ids: dict[str, float] = {}
-    # Each article gets a random TTL so expiries are spread across cycles
-    # instead of all 152 articles expiring simultaneously (burst/silence).
-    # Range: 90s–450s → ~25% of the pool re-enters the engine each cycle,
-    # giving a continuous trickle of signals rather than burst-then-gap.
-    SEEN_TTL_MIN = 95   # just over one POLL_CYCLE — never re-publishes mid-cycle
-    SEEN_TTL_MAX = 450  # ~5 cycles spread — articles rotate every 1.5–5 min
+    # Each article gets a random TTL so expiries are spread across cycles.
+    # previous 90s–450s window produced repeating signals quickly.
+    # 1h–4h window reduces identical repeated signals while still recovering old news.
+    SEEN_TTL_MIN = 3600   # 1 hour
+    SEEN_TTL_MAX = 14_400 # 4 hours
     cycle_num = 0
 
     log.info(

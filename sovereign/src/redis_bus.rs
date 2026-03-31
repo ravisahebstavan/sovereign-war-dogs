@@ -107,7 +107,7 @@ pub async fn relay_python_events(
             .arg("BLOCK")
             .arg(500u64)   // block up to 500 ms, then loop
             .arg("COUNT")
-            .arg(100u64)
+            .arg(500u64)  // increase batch size for stream fan-out throughput
             .arg("STREAMS")
             .arg(crate::REDIS_STREAM_EVENTS)
             .arg(&last_id)

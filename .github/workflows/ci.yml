@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Run cargo check
+        working-directory: sovereign
+        run: cargo check
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.12
+
+      - name: Install Python deps (signal)
+        run: |
+          cd signal
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Python syntax check
+        run: |
+          python -m py_compile engine.py nlp.py news_poller.py
+
+      - name: Install Python deps (contracts)
+        run: |
+          cd contracts
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run contract poller static checks
+        run: |
+          cd contracts
+          python -m py_compile poller.py resolver.py
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+
+      - name: Install UI dependencies
+        run: |
+          cd ui
+          npm ci
+
+      - name: Build UI
+        run: |
+          cd ui
+          npm run build
+
+      - name: Diagnostics smoke test
+        run: |
+          cd signal
+          python ../signal/diagnose.py
