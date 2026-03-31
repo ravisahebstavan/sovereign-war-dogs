@@ -220,7 +220,12 @@ function StepPrereqs({ onNext }) {
           </ActionBtn>
         )}
         {depsOk && (
-          <div style={{ marginTop: 10, fontSize: 10, color: "#00ff88" }}>✓ Python packages installed</div>
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 10, color: "#00ff88" }}>✓ Python packages installed</div>
+            <div style={{ marginTop: 8, padding: "10px 12px", background: "#0d0d0d", border: "1px solid #1a1400", borderRadius: 3, fontSize: 10, color: "#aa7700", lineHeight: 1.7 }}>
+              ⚠ On first signal run, FinBERT (~400 MB) will auto-download. This takes 2–3 min. Signals will start flowing once the model is cached.
+            </div>
+          </div>
         )}
         {installErr && (
           <div style={{ marginTop: 10, fontSize: 10, color: "#ff3355", lineHeight: 1.6 }}>{installErr}</div>

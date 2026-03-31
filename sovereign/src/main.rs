@@ -27,8 +27,13 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let finnhub_key = std::env::var("FINNHUB_API_KEY")
-        .expect("FINNHUB_API_KEY not set — get a free key at finnhub.io");
+    let finnhub_key = std::env::var("FINNHUB_API_KEY").unwrap_or_default();
+    if finnhub_key.is_empty() {
+        tracing::warn!(
+            "FINNHUB_API_KEY not set — news/quote polling disabled. \
+             Get a free key at https://finnhub.io and add it to your .env"
+        );
+    }
     let redis_url = std::env::var("REDIS_URL")
         .unwrap_or_else(|_| "redis://127.0.0.1:6380".to_string());
 
@@ -63,6 +68,7 @@ async fn main() -> Result<()> {
     tokio::join!(
         // General news — broad market headlines
         tokio::spawn(async move {
+            if key1.is_empty() { tracing::warn!("general news poller disabled — no FINNHUB_API_KEY"); return; }
             loop {
                 finnhub::run_news(key1.clone(), bus1.clone()).await;
                 tracing::error!("general news poller exited — restarting in 5s");
@@ -71,6 +77,7 @@ async fn main() -> Result<()> {
         }),
         // Company-specific news — direct feed per watchlist ticker (PRIMARY signal source)
         tokio::spawn(async move {
+            if key2.is_empty() { tracing::warn!("company news poller disabled — no FINNHUB_API_KEY"); return; }
             loop {
                 finnhub::run_company_news(key2.clone(), bus3.clone()).await;
                 tracing::error!("company news poller exited — restarting in 5s");
@@ -79,6 +86,7 @@ async fn main() -> Result<()> {
         }),
         // Quote poller — live prices for watchlist
         tokio::spawn(async move {
+            if key3.is_empty() { tracing::warn!("quote poller disabled — no FINNHUB_API_KEY"); return; }
             loop {
                 finnhub::run_trades(key3.clone(), bus2.clone()).await;
                 tracing::error!("quote poller exited — restarting in 5s");

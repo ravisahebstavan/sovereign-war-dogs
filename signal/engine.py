@@ -297,15 +297,21 @@ async def run():
                     )
 
                     out_event = build_event(signal, ingested_ns)
-                    try:
-                        await redis.xadd(
-                            STREAM_OUT,
-                            {"data": json.dumps(out_event)},
-                            maxlen=5000,
-                            approximate=True,
-                        )
-                    except Exception as e:
-                        log.error(f"Redis xadd error: {e}")
+                    for _attempt in range(3):
+                        try:
+                            await redis.xadd(
+                                STREAM_OUT,
+                                {"data": json.dumps(out_event)},
+                                maxlen=5000,
+                                approximate=True,
+                            )
+                            break
+                        except Exception as e:
+                            log.error(f"Redis xadd error (attempt {_attempt+1}/3): {e}")
+                            if _attempt < 2:
+                                redis = await connect_redis(REDIS_URL)
+                            else:
+                                log.error("xadd failed after 3 attempts — signal dropped")
 
                     latency_ms = (time.time_ns() - ingested_ns) / 1e6
                     log.info(

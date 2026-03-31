@@ -25,9 +25,15 @@ function useSovereignWS(url) {
           const p  = ev.payload;
           if (!p) return;
           if (p.kind === "signal")
-            setSignals(prev => [{ ...p, _id: ev.id, _ts: Date.now() }, ...prev].slice(0, 100));
+            setSignals(prev => {
+              if (prev.some(s => s._id === ev.id)) return prev; // dedupe ring-buffer replay
+              return [{ ...p, _id: ev.id, _ts: Date.now() }, ...prev].slice(0, 100);
+            });
           else if (p.kind === "contract")
-            setContracts(prev => [{ ...p, _id: ev.id, _ts: Date.now() }, ...prev].slice(0, 50));
+            setContracts(prev => {
+              if (prev.some(c => c._id === ev.id)) return prev;
+              return [{ ...p, _id: ev.id, _ts: Date.now() }, ...prev].slice(0, 50);
+            });
           else if (p.kind === "trade")
             setTrades(prev => ({ ...prev, [p.ticker]: { price: p.price, volume: p.volume, ts: Date.now() } }));
           else if (p.kind === "latency_snapshot")

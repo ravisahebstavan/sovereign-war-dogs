@@ -133,8 +133,22 @@ async def fetch_recent_awards(client: httpx.AsyncClient) -> list[dict]:
         return []
 
 
+async def connect_redis(url: str) -> aioredis.Redis:
+    backoff = 1
+    while True:
+        try:
+            r = await aioredis.from_url(url, decode_responses=True)
+            await r.ping()
+            log.info("Redis connected")
+            return r
+        except Exception as e:
+            log.warning(f"Redis connect failed: {e} — retrying in {backoff}s")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 60)
+
+
 async def run():
-    redis    = await aioredis.from_url(REDIS_URL, decode_responses=True)
+    redis    = await connect_redis(REDIS_URL)
     seen_ids: set[str] = set()
 
     log.info("USASpending.gov contract poller starting")
@@ -156,12 +170,17 @@ async def run():
                 event = build_event(award, ingested_ns)
 
                 if event["payload"]["ticker"]:
-                    await redis.xadd(
-                        STREAM_CONTRACTS,
-                        {"data": json.dumps(event)},
-                        maxlen=2000,
-                        approximate=True,
-                    )
+                    try:
+                        await redis.xadd(
+                            STREAM_CONTRACTS,
+                            {"data": json.dumps(event)},
+                            maxlen=2000,
+                            approximate=True,
+                        )
+                    except Exception as e:
+                        log.error(f"Redis xadd failed: {e} — reconnecting")
+                        redis = await connect_redis(REDIS_URL)
+                        continue
                     new_count += 1
                     log.info(
                         f"CONTRACT {event['payload']['ticker']:6s} "
