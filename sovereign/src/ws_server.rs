@@ -74,6 +74,12 @@ async fn handle_socket(mut socket: WebSocket, tx: Tx, history: History) {
 
     let mut rx = tx.subscribe();
 
+    // Send a WebSocket Ping every 30 s to prevent NAT timeouts and browser
+    // idle-connection pruning from silently dropping long-lived sessions
+    // (dashboards left open overnight, market-hours monitoring, etc.).
+    let mut ping_interval = tokio::time::interval(Duration::from_secs(30));
+    ping_interval.tick().await; // skip the immediate first tick
+
     loop {
         tokio::select! {
             msg = rx.recv() => {
@@ -96,11 +102,22 @@ async fn handle_socket(mut socket: WebSocket, tx: Tx, history: History) {
                     Err(_) => break, // channel closed
                 }
             }
-            Some(Ok(Message::Close(_))) = socket.recv() => {
-                info!("dashboard client disconnected");
-                break;
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Close(_))) => {
+                        info!("dashboard client disconnected");
+                        break;
+                    }
+                    Some(Ok(Message::Pong(_))) => {} // keepalive reply — nothing to do
+                    Some(Err(_)) | None => break,    // socket error or remote EOF
+                    _ => {}                           // Text/Binary/Ping from client — ignore
+                }
             }
-            else => break,
+            _ = ping_interval.tick() => {
+                if socket.send(Message::Ping(vec![])).await.is_err() {
+                    break;
+                }
+            }
         }
     }
 }

@@ -10,6 +10,7 @@ can push them to the dashboard in real-time.
 """
 
 import asyncio
+import hashlib
 import json
 import os
 import time
@@ -41,7 +42,7 @@ STREAM_OUT       = "sovereign:events"
 # With direct company-news polling, articles are always relevant — lower threshold
 # captures more genuine signals without generating noise.
 ALPHA_THRESHOLD  = float(os.getenv("ALPHA_THRESHOLD", "0.10"))
-MAX_POSITION_USD = 1000
+MAX_POSITION_USD = float(os.getenv("MAX_POSITION_USD", "1000"))
 
 
 # ─── Theme detection ─────────────────────────────────────────────────────────
@@ -138,6 +139,17 @@ async def run():
 
     log.info(f"signal engine ready — threshold |α|>{ALPHA_THRESHOLD} — consuming {STREAM_NEWS}")
 
+    # Per-headline dedup: same article published by both Finnhub and RSS feeds
+    # would otherwise fire twice.  Key = md5(headline[:100]), value = expiry ts.
+    HEADLINE_DEDUP_TTL = 300   # 5 minutes — long enough to catch cross-feed duplicates
+    seen_headlines: dict[str, float] = {}
+
+    # Circuit breaker: cap article processing at 20/min to guard against
+    # malformed feed bursts flooding the NLP thread pool.
+    SIGNAL_RATE_LIMIT  = 20
+    signals_this_minute = 0
+    minute_start        = time.time()
+
     # Read messages from the last 10 minutes so any news published before the
     # engine started (e.g. during a news_poller cycle) is not silently missed.
     _ten_min_ago     = int((time.time() - 600) * 1000)
@@ -221,7 +233,7 @@ async def run():
 
                 nlp_ms = (time.perf_counter() - t0) * 1000
 
-                sentiment        = sent_result["scalar"]
+                sentiment        = max(-1.0, min(1.0, sent_result["scalar"]))
                 finbert_positive = sent_result["positive"]
                 finbert_negative = sent_result["negative"]
                 finbert_neutral  = sent_result["neutral"]
@@ -235,6 +247,35 @@ async def run():
 
                 if not all_tickers:
                     continue
+
+                # ── Headline dedup ────────────────────────────────────────────
+                # Finnhub and RSS feeds often publish the same article within
+                # seconds of each other.  Hash the first 100 chars of the
+                # headline (enough to identify the story) and skip if we've
+                # already processed it recently.
+                headline_hash = hashlib.md5(headline[:100].encode()).hexdigest()
+                now_ts        = time.time()
+                if seen_headlines.get(headline_hash, 0) > now_ts:
+                    log.debug(f"dedup skip: {headline[:60]}")
+                    continue
+                seen_headlines[headline_hash] = now_ts + HEADLINE_DEDUP_TTL
+
+                # ── Circuit breaker ───────────────────────────────────────────
+                # Reset counter each minute; drop articles if throughput spikes
+                # beyond SIGNAL_RATE_LIMIT (e.g. malformed feed flooding NLP).
+                if now_ts - minute_start >= 60:
+                    signals_this_minute = 0
+                    minute_start        = now_ts
+                if signals_this_minute >= SIGNAL_RATE_LIMIT:
+                    log.warning(
+                        f"circuit breaker: {SIGNAL_RATE_LIMIT} articles/min reached "
+                        f"— dropping: {headline[:60]}"
+                    )
+                    continue
+                signals_this_minute += 1
+
+                # Evict expired dedup entries to prevent unbounded growth
+                seen_headlines = {k: v for k, v in seen_headlines.items() if v > now_ts}
 
                 log.info(
                     f"NLP: {nlp_ms:.1f}ms | sentiment={sentiment:+.3f} "
