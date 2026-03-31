@@ -1,0 +1,57 @@
+name: Deploy React Dashboard to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "ui/src/**"
+      - "ui/package*.json"
+      - "ui/vite.config.js"
+      - "ui/index.html"
+      - ".github/workflows/pages.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    name: Build & Deploy React App
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: ui
+
+      - name: Build React app for GitHub Pages
+        run: npm run build
+        working-directory: ui
+        env:
+          VITE_APP_BASE: /sovereign-war-dogs/app/
+
+      - name: Deploy to docs/app/
+        run: |
+          rm -rf docs/app
+          mkdir -p docs/app
+          cp -r ui/dist/. docs/app/
+          echo "Build deployed to docs/app/"
+          ls docs/app/
+
+      - name: Commit and push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/app/
+          git diff --staged --quiet && echo "No changes to deploy" || \
+            git commit -m "deploy: update React dashboard to docs/app/ [skip ci]" && \
+            git push
