@@ -133,7 +133,11 @@ async def run():
     # TTL-based seen cache: uid -> expiry timestamp
     # Articles expire after 2 hours so they recycle through the engine continuously
     seen_ids: dict[str, float] = {}
-    SEEN_TTL = 100   # just over one poll cycle (90s) — republishes every cycle so signals never stop
+    # SEEN_TTL must be STRICTLY LESS than POLL_CYCLE (90s).
+    # Ticker i is published at T=i*2 and expires at T=i*2+SEEN_TTL.
+    # Cycle 2 polls ticker i at T=90+i*2. For re-publication we need
+    # i*2+SEEN_TTL < 90+i*2 → SEEN_TTL < 90. Using 80s gives a 10s buffer.
+    SEEN_TTL = 80   # < POLL_CYCLE (90s) so every article re-publishes every cycle
     cycle_num = 0
 
     log.info(

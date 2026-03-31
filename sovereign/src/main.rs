@@ -12,7 +12,7 @@ use tracing_subscriber::EnvFilter;
 pub const REDIS_STREAM_NEWS:     &str = "sovereign:news";
 pub const REDIS_STREAM_TRADES:   &str = "sovereign:trades";
 pub const REDIS_STREAM_EVENTS:   &str = "sovereign:events";
-pub const WS_BROADCAST_CAPACITY: usize = 8192;
+pub const WS_BROADCAST_CAPACITY: usize = 65_536;
 
 #[tokio::main]
 async fn main() -> Result<()> {

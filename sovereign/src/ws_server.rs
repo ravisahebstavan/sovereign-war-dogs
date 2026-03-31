@@ -76,14 +76,24 @@ async fn handle_socket(mut socket: WebSocket, tx: Tx, history: History) {
 
     loop {
         tokio::select! {
-            Ok(event) = rx.recv() => {
-                match serde_json::to_string(&*event) {
-                    Ok(json) => {
-                        if socket.send(Message::Text(json)).await.is_err() {
-                            break; // client disconnected
+            msg = rx.recv() => {
+                match msg {
+                    Ok(event) => {
+                        match serde_json::to_string(&*event) {
+                            Ok(json) => {
+                                if socket.send(Message::Text(json)).await.is_err() {
+                                    break; // client disconnected
+                                }
+                            }
+                            Err(e) => tracing::error!("serialize error: {e}"),
                         }
                     }
-                    Err(e) => tracing::error!("serialize error: {e}"),
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        // Broadcast channel was full — we missed n events (startup replay burst).
+                        // Skip and continue — do NOT disconnect the client.
+                        tracing::warn!("WS client lagged by {n} events — skipping, staying connected");
+                    }
+                    Err(_) => break, // channel closed
                 }
             }
             Some(Ok(Message::Close(_))) = socket.recv() => {

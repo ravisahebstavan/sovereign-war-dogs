@@ -89,9 +89,15 @@ pub async fn relay_python_events(
 
     info!("Python event relay started — watching {}", crate::REDIS_STREAM_EVENTS);
 
-    // Start from the beginning so we pick up any signals written before this
-    // function started (e.g. during the Python news_poller warm-up cycle).
-    let mut last_id = "0-0".to_string();
+    // Start from 60s ago so we catch signals written during the Python warm-up
+    // cycle without replaying the entire stream history (which blasts the broadcast
+    // channel and triggers Lagged errors on connected WS clients).
+    let start_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .saturating_sub(60_000) as u64;
+    let mut last_id = format!("{start_ms}-0");
     let mut relayed: u64 = 0;
 
     loop {
