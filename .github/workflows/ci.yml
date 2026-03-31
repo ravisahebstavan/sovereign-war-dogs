@@ -47,6 +47,7 @@ jobs:
           python -m pip install -r requirements.txt
 
       - name: Python syntax check
+        working-directory: signal
         run: |
           python -m py_compile engine.py nlp.py news_poller.py rss_poller.py
 
