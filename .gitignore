@@ -46,5 +46,12 @@ desktop.ini
 *.swp
 *.swo
 
+# ── Runtime logs ─────────────────────────────────────────────────────────────
+logs/
+
+# ── Legacy / stale directories ────────────────────────────────────────────────
+GITHUB_UPLOAD/
+analytics/
+
 # ── Claude Code session data ──────────────────────────────────────────────────
 .claude/
