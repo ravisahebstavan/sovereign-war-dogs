@@ -40,8 +40,8 @@ REDIS_URL   = os.getenv("REDIS_URL", "redis://localhost:6379")
 FINNHUB_KEY = os.getenv("FINNHUB_API_KEY", "")
 STREAM_NEWS = "sovereign:news"
 POLL_CYCLE  = 90    # seconds between full cycles
-DAYS_BACK   = 3    # how many days of news to look back on each cycle
-ARTICLES_PER_TICKER = 3
+DAYS_BACK   = 7    # how many days of news to look back on each cycle
+ARTICLES_PER_TICKER = 8  # fetch more per ticker so fresh articles always exist
 
 # Full 19-ticker watchlist — same as Rust core
 WATCHLIST = [
@@ -133,11 +133,13 @@ async def run():
     # TTL-based seen cache: uid -> expiry timestamp
     # Articles expire after 2 hours so they recycle through the engine continuously
     seen_ids: dict[str, float] = {}
-    # SEEN_TTL must be STRICTLY LESS than POLL_CYCLE (90s).
-    # Ticker i is published at T=i*2 and expires at T=i*2+SEEN_TTL.
-    # Cycle 2 polls ticker i at T=90+i*2. For re-publication we need
-    # i*2+SEEN_TTL < 90+i*2 → SEEN_TTL < 90. Using 80s gives a 10s buffer.
-    SEEN_TTL = 80   # < POLL_CYCLE (90s) so every article re-publishes every cycle
+    # TTL controls how long an article is suppressed before it can re-appear.
+    # Setting it to 3600s (1 hour) means:
+    #   - Each article appears at most once per hour — no visible cycling
+    #   - Between cycles, Finnhub publishes genuinely new articles which flow through
+    #   - For busy tickers (LMT, BA, AMZN) new news arrives every few minutes
+    #   - For quiet tickers (KTOS, AVAV) there may be gaps — this is honest behavior
+    SEEN_TTL = 3600  # 1 hour — prevents same headline cycling every 90s
     cycle_num = 0
 
     log.info(
