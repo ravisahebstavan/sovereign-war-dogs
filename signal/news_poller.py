@@ -166,9 +166,12 @@ async def run():
             cycle_start = time.time()
             published   = 0
 
-            log.info(f"cycle {cycle_num} — fetching news for all {len(WATCHLIST)} tickers")
+            # Shuffle each cycle so every ticker gets equal freshness priority —
+            # no ticker is always last and therefore always stale by ~56s (28×2s).
+            cycle_tickers = random.sample(WATCHLIST, len(WATCHLIST))
+            log.info(f"cycle {cycle_num} — fetching news for all {len(cycle_tickers)} tickers")
 
-            for ticker in WATCHLIST:
+            for ticker in cycle_tickers:
                 articles, rate_limited = await fetch_ticker_news(client, ticker)
 
                 if rate_limited:

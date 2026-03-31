@@ -820,6 +820,23 @@ function SignalEmptyState({ connected }) {
 function Dashboard() {
   const { signals, contracts, trades, latency, connected, refresh } = useSovereignWS("ws://localhost:9001/ws");
   const [selectedSignal, setSelectedSignal] = useState(null);
+  const [updateInfo,  setUpdateInfo]  = useState(null);
+  const [svcStatus,   setSvcStatus]   = useState(null);
+
+  // Tauri-only: check for app updates on mount, poll service health every 10s.
+  useEffect(() => {
+    if (!window.__TAURI__) return;
+    let cancelled = false;
+    import("@tauri-apps/api/core").then(({ invoke }) => {
+      invoke("check_update")
+        .then(info => { if (!cancelled && info.has_update) setUpdateInfo(info); })
+        .catch(() => {});
+      const tick = () => invoke("service_status").then(s => { if (!cancelled) setSvcStatus(s); }).catch(() => {});
+      tick();
+      const id = setInterval(tick, 10_000);
+      return () => { cancelled = true; clearInterval(id); };
+    });
+  }, []);
 
   const buys   = signals.filter(s => s.direction === "LONG").length;
   const shorts = signals.filter(s => s.direction === "SHORT").length;
@@ -838,6 +855,21 @@ function Dashboard() {
         @keyframes slideIn { from{transform:translateX(-6px);opacity:0} to{transform:translateX(0);opacity:1} }
       `}</style>
 
+      {/* ── Update banner (Tauri only, shown when newer release exists) ── */}
+      {updateInfo?.has_update && (
+        <div style={{ padding:"6px 20px", background:"rgba(0,180,90,0.07)", borderBottom:"1px solid rgba(0,180,90,0.18)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <span style={{ fontSize:10, color:"#00cc66", letterSpacing:"0.05em" }}>
+            SOVEREIGN {updateInfo.latest} available — you are on {updateInfo.current}
+          </span>
+          <button
+            onClick={() => import("@tauri-apps/api/core").then(({ invoke }) => invoke("open_url", { url: updateInfo.url }))}
+            style={{ fontSize:9, color:"#00ff88", background:"transparent", border:"1px solid rgba(0,255,136,0.25)", padding:"2px 10px", cursor:"pointer", borderRadius:2, letterSpacing:"0.08em" }}
+          >
+            DOWNLOAD ↗
+          </button>
+        </div>
+      )}
+
       {/* ── Header ── */}
       <div style={{ padding:"14px 20px 12px", borderBottom:"1px solid #141414", display:"flex", alignItems:"center", justifyContent:"space-between", background:"#050505" }}>
         <div>
@@ -845,6 +877,20 @@ function Dashboard() {
           <div style={{ fontSize:9, color:"#2a2a2a", letterSpacing:"0.18em", marginTop:2 }}>
             GEOPOLITICAL ALPHA PIPELINE — RUST + PYTHON + FINBERT — ALL FREE
           </div>
+          {/* Service health indicators — only shown when Tauri has polled status */}
+          {svcStatus && (
+            <div style={{ display:"flex", gap:10, marginTop:5 }}>
+              {[
+                { label:"REDIS",     ok: svcStatus.redis },
+                { label:"CORE :9001", ok: svcStatus.sovereign },
+              ].map(({ label, ok }) => (
+                <span key={label} style={{ fontSize:8, color: ok ? "#00ff88" : "#ff3355", letterSpacing:"0.1em" }}>
+                  <span style={{ display:"inline-block", width:5, height:5, borderRadius:"50%", background: ok ? "#00ff88" : "#ff3355", marginRight:4, verticalAlign:"middle" }} />
+                  {label}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Signal counters */}

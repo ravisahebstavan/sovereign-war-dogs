@@ -15,7 +15,7 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 // Analytics — fire-and-forget launch ping to Google Sheets
 // ---------------------------------------------------------------------------
 const ANALYTICS_URL: &str = "https://script.google.com/macros/s/AKfycbxaULtARcNkE_g2UrYn6uL8vn_qCu82epOHSEjb8AnXJI0rrKO0Yty3_yN6BL20IrclfA/exec";
-const APP_VERSION:   &str = "1.1.0";
+const APP_VERSION:   &str = "1.2.1";
 
 /// Read or create a persistent session UUID stored in the app's config dir.
 fn session_id(app: &AppHandle) -> String {
@@ -374,6 +374,7 @@ fn spawn_services(app: &AppHandle) -> Vec<Child> {
 
     for (subdir, script_name, label) in &[
         ("signal",    "news_poller.py", "news_poller"),
+        ("signal",    "rss_poller.py",  "rss_poller"),
         ("contracts", "poller.py",      "contracts/poller"),
         ("signal",    "engine.py",      "engine"),
     ] {
@@ -535,6 +536,67 @@ fn activate(
 }
 
 // ---------------------------------------------------------------------------
+// Update check — fetches latest GitHub release and compares to APP_VERSION.
+// Returns JSON { current, latest, has_update, url }.
+// Run synchronously (called from user action); blocks for at most 5 s.
+// ---------------------------------------------------------------------------
+#[tauri::command]
+fn check_update() -> serde_json::Value {
+    let out = Command::new("curl")
+        .args([
+            "-s", "-m", "5", "-L",
+            "https://api.github.com/repos/ravisahebstavan/sovereign-war-dogs/releases/latest",
+            "-H", "User-Agent: sovereign-war-dogs",
+        ])
+        .output();
+
+    let fallback = serde_json::json!({
+        "current": APP_VERSION, "latest": APP_VERSION, "has_update": false, "url": ""
+    });
+
+    match out {
+        Ok(o) if o.status.success() => {
+            if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&o.stdout) {
+                let latest  = json["tag_name"].as_str().unwrap_or("").trim_start_matches('v').to_string();
+                let url     = json["html_url"].as_str().unwrap_or("").to_string();
+                let has_upd = !latest.is_empty() && latest != APP_VERSION;
+                serde_json::json!({
+                    "current":    APP_VERSION,
+                    "latest":     latest,
+                    "has_update": has_upd,
+                    "url":        url,
+                })
+            } else { fallback }
+        }
+        _ => fallback,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Open URL in the system's default browser.
+// ---------------------------------------------------------------------------
+#[tauri::command]
+fn open_url(url: String) {
+    #[cfg(target_os = "windows")]
+    let _ = Command::new("cmd").args(["/c", "start", "", &url]).spawn();
+    #[cfg(not(target_os = "windows"))]
+    let _ = Command::new("xdg-open").arg(&url).spawn();
+}
+
+// ---------------------------------------------------------------------------
+// Service status — quick TCP probe of Redis + sovereign-core ports.
+// Returns JSON { redis: bool, sovereign: bool }.
+// ---------------------------------------------------------------------------
+#[tauri::command]
+fn service_status() -> serde_json::Value {
+    use std::net::TcpStream;
+    let redis     = TcpStream::connect("127.0.0.1:6380").is_ok()
+                    || TcpStream::connect("127.0.0.1:6379").is_ok();
+    let sovereign = TcpStream::connect("127.0.0.1:9001").is_ok();
+    serde_json::json!({ "redis": redis, "sovereign": sovereign })
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -571,6 +633,9 @@ pub fn run() {
             check_python,
             check_redis,
             install_python_deps,
+            check_update,
+            open_url,
+            service_status,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { .. } = event {
