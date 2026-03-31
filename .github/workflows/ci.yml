@@ -79,4 +79,4 @@ jobs:
       - name: Diagnostics smoke test
         run: |
           cd signal
-          python ../signal/diagnose.py
+          python diagnose.py
