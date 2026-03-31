@@ -11,9 +11,9 @@ WHY THIS EXISTS:
   scored articles flow continuously into the pipeline.
 
 Rate limit: Finnhub free = 60 req/min.
-  Rust quotes use ~20/min (19 tickers × 1s spacing).
-  This poller uses ~10/min (19 tickers × 2s spacing).
-  General news: 2/min. Total: ~32/min — safely under the limit.
+  Rust quotes use ~28/min (28 tickers × 1s spacing).
+  This poller uses ~14/min (28 tickers × 2s spacing).
+  General news: 2/min. Total: ~44/min — safely under the limit.
 """
 
 import asyncio
@@ -44,12 +44,21 @@ POLL_CYCLE  = 90    # seconds between full cycles
 DAYS_BACK   = 7    # how many days of news to look back on each cycle
 ARTICLES_PER_TICKER = 8  # fetch more per ticker so fresh articles always exist
 
-# Full 19-ticker watchlist — same as Rust core
+# 28-ticker watchlist — defence primes, cyber, AI hardware, cloud
 WATCHLIST = [
+    # Core defence primes
     "LMT",  "RTX",  "NOC",  "GD",   "BA",
     "HII",  "LHX",  "LDOS", "SAIC", "BAH",
+    # Intelligence / autonomy / ISR
     "PLTR", "KTOS", "AVAV", "CACI", "MANT",
+    # Big tech (cloud / AI compute contracted to DoD)
     "MSFT", "AMZN", "GOOGL", "ORCL",
+    # Emerging defence tech
+    "AXON", "TXT",  "HWM",  "BWXT",
+    # Cyber / endpoint
+    "CRWD", "PANW",
+    # AI chips & hardware
+    "NVDA", "INTC", "AMD",
 ]
 
 FINNHUB_COMPANY_NEWS = "https://finnhub.io/api/v1/company-news"
@@ -144,7 +153,8 @@ async def run():
 
     log.info(
         f"news poller ready — {len(WATCHLIST)} tickers · "
-        f"{ARTICLES_PER_TICKER} articles each · {POLL_CYCLE}s cycle"
+        f"{ARTICLES_PER_TICKER} articles each · {POLL_CYCLE}s cycle · "
+        f"SEEN_TTL {SEEN_TTL_MIN//3600}h–{SEEN_TTL_MAX//3600}h"
     )
 
     async with httpx.AsyncClient(

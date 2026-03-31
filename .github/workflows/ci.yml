@@ -48,7 +48,7 @@ jobs:
 
       - name: Python syntax check
         run: |
-          python -m py_compile engine.py nlp.py news_poller.py
+          python -m py_compile engine.py nlp.py news_poller.py rss_poller.py
 
       - name: Install Python deps (contracts)
         run: |
