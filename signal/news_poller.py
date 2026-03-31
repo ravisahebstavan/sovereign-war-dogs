@@ -20,6 +20,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -133,13 +134,12 @@ async def run():
     # TTL-based seen cache: uid -> expiry timestamp
     # Articles expire after 2 hours so they recycle through the engine continuously
     seen_ids: dict[str, float] = {}
-    # TTL controls how long an article is suppressed before it can re-appear.
-    # Setting it to 3600s (1 hour) means:
-    #   - Each article appears at most once per hour — no visible cycling
-    #   - Between cycles, Finnhub publishes genuinely new articles which flow through
-    #   - For busy tickers (LMT, BA, AMZN) new news arrives every few minutes
-    #   - For quiet tickers (KTOS, AVAV) there may be gaps — this is honest behavior
-    SEEN_TTL = 3600  # 1 hour — prevents same headline cycling every 90s
+    # Each article gets a random TTL so expiries are spread across cycles
+    # instead of all 152 articles expiring simultaneously (burst/silence).
+    # Range: 90s–450s → ~25% of the pool re-enters the engine each cycle,
+    # giving a continuous trickle of signals rather than burst-then-gap.
+    SEEN_TTL_MIN = 95   # just over one POLL_CYCLE — never re-publishes mid-cycle
+    SEEN_TTL_MAX = 450  # ~5 cycles spread — articles rotate every 1.5–5 min
     cycle_num = 0
 
     log.info(
@@ -175,7 +175,7 @@ async def run():
                     if not headline or seen_ids.get(uid, 0) > now_ts:
                         continue
 
-                    seen_ids[uid] = now_ts + SEEN_TTL
+                    seen_ids[uid] = now_ts + random.uniform(SEEN_TTL_MIN, SEEN_TTL_MAX)
                     event = build_news_event(article, ticker)
 
                     try:
