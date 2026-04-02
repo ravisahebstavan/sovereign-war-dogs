@@ -63,11 +63,16 @@ jobs:
         shell: pwsh
         run: |
           $triple = rustc -vV | Select-String "host:" | ForEach-Object { $_.ToString().Split()[1] }
-          New-Item -ItemType Directory -Force -Path ui/src-tauri/binaries | Out-Null
+          New-Item -ItemType Directory -Force -Path ui/src-tauri/binaries   | Out-Null
+          New-Item -ItemType Directory -Force -Path ui/src-tauri/resources  | Out-Null
           Copy-Item sovereign/target/release/sovereign-core.exe `
             ui/src-tauri/binaries/sovereign-core.exe
           Copy-Item sovereign/target/release/sovereign-core.exe `
             "ui/src-tauri/binaries/sovereign-core-$triple.exe"
+          # Also place in resources/ so find_sovereign_exe locates it via
+          # app.path().resource_dir() in the installed bundle.
+          Copy-Item sovereign/target/release/sovereign-core.exe `
+            ui/src-tauri/resources/sovereign-core.exe
           Write-Host "Sidecar target triple: $triple"
 
       # ------------------------------------------------------------------
